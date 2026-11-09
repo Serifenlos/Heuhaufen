@@ -1,22 +1,22 @@
 {% extends "base.html" %}
 {% import "includes/ui.html" as ui %}
+{#
+  Übersicht (Issue #14): oben das Angebot, das über alle Gesuche als Nächstes endet, groß; darunter je Gesuch
+  eine Kachel mit der Trefferzahl als großer Zahl, „neu“ = in den letzten 24 Stunden gefunden (util.NEW_FOR).
+  Bewusst anders als die Angebotszeilen eine Ebene tiefer (search_detail.html).
+#}
+{% macro price(v) %}{{ eur(v.gross if prices_with_shipping else v.rel_price) }}{% endmacro %}
 {% block content %}
-<section class="mt-9 mb-2 flex flex-wrap items-start justify-between gap-x-8 gap-y-5 md:items-end">
+{% set total = searches|sum(attribute='count') %}
+{% set total_new = searches|sum(attribute='new_count') %}
+<section class="mt-9 mb-2 flex flex-wrap items-end justify-between gap-x-8 gap-y-5">
   <div>
     <h1>Gesuche</h1>
     {% if searches %}
-    <p class="mt-1.5 max-w-[62ch] text-muted">{{ searches|length }} {{ 'Gesuch' if searches|length == 1 else 'Gesuche' }}, zuletzt geprüft {{ ago(last_tick, now) }}</p>
+    <p class="mt-1.5 max-w-[62ch] text-muted">{{ searches|length }} {{ 'Gesuch' if searches|length == 1 else 'Gesuche' }} · <span class="{{ ui.num() }}">{{ total }}</span> Treffer unter Limit{% if total_new %}, <span class="font-medium text-accent">{{ total_new }} neu</span>{% endif %} · geprüft {{ ago(last_tick, now) }}</p>
     {% endif %}
   </div>
-  <div class="flex flex-wrap items-center gap-2.5 max-xs:w-full max-xs:justify-between">
-    {% if searches %}
-    <div class="inline-flex max-w-full gap-0.5 rounded-control bg-tile p-0.75" role="group" aria-label="Darstellung">
-      <button type="button" data-set-view="cards" aria-pressed="true" class="{{ ui.segment() }} aria-pressed:border-line aria-pressed:bg-surface aria-pressed:text-ink">Karten</button>
-      <button type="button" data-set-view="list" aria-pressed="false" class="{{ ui.segment() }} aria-pressed:border-line aria-pressed:bg-surface aria-pressed:text-ink">Liste</button>
-    </div>
-    {% endif %}
-    <a class="{{ ui.button('primary') }}" href="/searches/new">Neues Gesuch</a>
-  </div>
+  <a class="{{ ui.button('primary') }}" href="/searches/new">Neues Gesuch</a>
 </section>
 
 {% if notices %}
@@ -27,62 +27,67 @@
 </div>
 {% endif %}
 
-{% if searches %}
-{#
-  Übersicht als Karten oder Liste. Das Attribut data-view wechselt per JavaScript,
-  die Klassen mit view-cards: bzw. view-list: gelten nur in der jeweiligen Ansicht.
-#}
-<div data-collection data-view="cards"
-     class="mt-9 border-line
-            view-cards:grid view-cards:grid-cols-[repeat(auto-fill,minmax(min(100%,220px),1fr))] view-cards:gap-x-5 view-cards:gap-y-9
-            md:view-cards:grid-cols-[repeat(auto-fill,minmax(250px,1fr))] md:view-cards:gap-x-7 md:view-cards:gap-y-11
-            view-list:flex view-list:flex-col view-list:border-t">
-  {% for s in searches %}
-  {% set f = s.feature %}
-  <a href="/searches/{{ s.id }}" {% if not s.active %}data-paused{% endif %}
-     class="group/entry min-w-0 border-line text-inherit no-underline
-            view-cards:flex view-cards:flex-col
-            view-list:grid view-list:grid-cols-[56px_minmax(0,1fr)] view-list:items-center view-list:gap-x-4 view-list:gap-y-1.5 view-list:border-b view-list:py-3.5
-            md:view-list:grid-cols-[64px_minmax(0,1fr)_minmax(200px,280px)] md:view-list:gap-5">
-
-    <div class="relative grid place-items-center overflow-hidden bg-tile view-cards:aspect-[4/3] view-cards:rounded-tile view-list:aspect-square view-list:rounded-thumb">
-      {% if f and f.image %}
-      <img class="{{ ui.product_image('card') }} group-data-paused/entry:opacity-45" src="{{ image_url(f) }}" alt="" loading="lazy" referrerpolicy="no-referrer">
-      {% else %}
-      <span class="font-num leading-none font-medium text-muted opacity-55 view-cards:text-[64px] view-list:text-2xl group-data-paused/entry:opacity-45" aria-hidden="true">{{ s.initial }}</span>
-      {% endif %}
-      {% if not s.active %}<span class="absolute top-3 left-3 rounded-full bg-surface px-2.25 py-0.75 text-xs font-medium text-muted view-list:hidden">Pausiert</span>{% endif %}
-    </div>
-
-    <div class="view-cards:mt-3.5">
-      <h2 class="line-clamp-2 text-title tracking-[-0.01em] group-hover/entry:underline group-hover/entry:decoration-1 group-hover/entry:underline-offset-3">{{ s.title }}</h2>
-      <p class="mt-0.75 text-sm text-muted">{{ s.description }}</p>
-      {% if s.last_error %}<p class="mt-1.5 text-meta text-over">{{ s.last_error }}</p>{% endif %}
-    </div>
-
-    <div class="grid view-cards:mt-3.5 view-cards:gap-1.5 view-list:col-start-2 view-list:gap-1 md:view-list:col-start-auto group-data-paused/entry:opacity-45">
-      {% if f %}
-      <p class="flex flex-wrap items-baseline gap-x-2.5 gap-y-1">
-        <span class="{{ ui.num() }} font-semibold tracking-[-0.01em] view-cards:text-figure view-list:text-title">{{ eur(f.gross if prices_with_shipping else f.rel_price) }}</span>
-        <span class="text-meta text-muted">{{ s.limit }}</span>
-      </p>
-      {{ ui.limit_line(f.ratio) }}
-      <p class="flex justify-between gap-3 text-meta text-muted">
-        {% if f.auction %}
-        <span>{{ ui.countdown_span(f.end_time, now, f.lead_seconds, cap=true) }}</span>
-        {% else %}
-        <span>Günstigster Sofortkauf</span>
-        {% endif %}
-        <span>{{ s.count }} Treffer</span>
-      </p>
-      {% else %}
-      <p class="text-note text-muted">{% if not s.active %}Pausiert{% elif s.last_run %}Gerade nichts unter Limit{% else %}Erste Suche startet gleich{% endif %}</p>
-      <p class="flex justify-between gap-3 text-meta text-muted"><span>{{ s.limit }}</span></p>
-      {% endif %}
-    </div>
+{% if upcoming %}{% set v, o = upcoming[0] %}
+<section class="mt-8" aria-labelledby="naechstes">
+  <h2 class="text-sm font-semibold text-ink-2" id="naechstes">Als Nächstes endet</h2>
+  <a href="/searches/{{ o.id }}" class="mt-3 grid grid-cols-[88px_minmax(0,1fr)] items-center gap-x-4 gap-y-4 rounded-2xl border border-line bg-surface p-4 text-inherit no-underline hover:border-control sm:grid-cols-[120px_minmax(0,1fr)_auto] sm:gap-x-6 sm:p-5">
+    <span class="grid aspect-square place-items-center overflow-hidden rounded-xl bg-tile">
+      {% if v.image %}<img class="{{ ui.product_image('card') }}" src="{{ image_url(v) }}" alt="" referrerpolicy="no-referrer">{% else %}<span class="font-num text-3xl text-muted opacity-55" aria-hidden="true">{{ o.initial }}</span>{% endif %}
+    </span>
+    <span class="grid min-w-0 gap-1">
+      <span class="truncate text-meta text-muted">aus „{{ o.title }}“</span>
+      <span class="line-clamp-2 font-medium leading-snug">{{ v.title }}</span>
+      <span class="flex flex-wrap items-baseline gap-x-2"><span class="{{ ui.num() }} text-title font-semibold">{{ price(v) }}</span><span class="text-meta text-muted">{{ o.limit }}</span></span>
+    </span>
+    <span class="col-span-2 flex items-baseline justify-between gap-3 border-t border-line pt-3 sm:col-span-1 sm:grid sm:justify-items-end sm:gap-1 sm:border-0 sm:pt-0">
+      <span class="text-meta text-muted">endet in</span>
+      {{ ui.countdown_time(v.end_time, now, v.lead_seconds, 'text-[34px] leading-none font-semibold tracking-[-0.02em]') }}
+      <span class="text-meta text-muted">{{ end_clock(v.end_time, now) }}</span>
+    </span>
   </a>
-  {% endfor %}
-</div>
+  {% if upcoming|length > 1 %}
+  <ul class="mt-3 grid gap-1.5 text-meta sm:flex sm:flex-wrap sm:gap-x-6">
+    {% for v, o in upcoming[1:] %}<li class="truncate"><span class="text-muted">Danach</span> {{ ui.countdown_time(v.end_time, now, v.lead_seconds) }} <span class="text-muted">· {{ o.title }} ·</span> <span class="{{ ui.num() }}">{{ price(v) }}</span></li>{% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if searches %}
+<section class="mt-10" aria-labelledby="alle-gesuche">
+  {% if upcoming %}<h2 class="mb-3 text-sm font-semibold text-ink-2" id="alle-gesuche">Alle Gesuche</h2>{% endif %}
+  <ul class="grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(270px,1fr))] sm:gap-4 {{ 'mt-7' if not upcoming }}" data-tiles>
+    {% for s in searches %}{% set f = s.feature %}
+    <li class="min-w-0">
+      <a href="/searches/{{ s.id }}" {% if not s.active %}data-paused{% endif %} class="flex h-full flex-col rounded-2xl border border-line bg-surface p-4 text-inherit no-underline hover:border-control data-paused:opacity-55 sm:p-5">
+        <h3 class="line-clamp-2 text-ui font-semibold leading-snug">{{ s.title }}</h3>
+        <p class="mt-0.5 truncate text-meta text-muted">Limit {{ eur(s.max_price, cents=False) }}</p>
+        {% if s.last_error %}<p class="mt-1.5 line-clamp-3 text-meta text-over">{{ s.last_error }}</p>{% endif %}
+        <p class="mt-4 flex flex-wrap items-baseline gap-x-2 gap-y-1">
+          <span class="{{ ui.num() }} text-[46px] leading-none font-semibold tracking-[-0.03em] {{ 'text-muted opacity-60' if not s.count }}">{{ s.count }}</span>
+          <span class="text-sm text-muted">Treffer</span>
+          {% if s.new_count %}<span class="rounded-full bg-accent-soft px-2 text-[12.5px] leading-5 font-semibold text-accent">{{ s.new_count }} neu</span>{% endif %}
+        </p>
+        <div class="mt-auto pt-4">
+          <div class="flex min-w-0 items-center gap-3 border-t border-line pt-3 text-meta">
+            {% if f and s.active and f.image %}<span class="grid size-9 flex-none place-items-center overflow-hidden rounded-thumb bg-tile max-sm:hidden"><img class="{{ ui.product_image() }}" src="{{ image_url(f) }}" alt="" loading="lazy" referrerpolicy="no-referrer"></span>{% endif %}
+            <span class="grid min-w-0 flex-1 gap-0.5 sm:flex sm:items-baseline sm:justify-between sm:gap-3">
+              <span class="truncate">
+                {%- if not s.active %}<span class="text-muted">Pausiert</span>
+                {%- elif f and f.auction %}<span class="text-muted">endet in</span> {{ ui.countdown_time(f.end_time, now, f.lead_seconds) }}
+                {%- elif f %}<span class="text-muted">Sofortkauf</span>
+                {%- elif s.last_run %}<span class="text-muted">Nichts unter Limit</span>
+                {%- else %}<span class="text-muted">Sucht gleich</span>{% endif -%}
+              </span>
+              {% if f and s.active %}<span class="{{ ui.num() }} font-semibold">{{ price(f) }}</span>{% endif %}
+            </span>
+          </div>
+        </div>
+      </a>
+    </li>
+    {% endfor %}
+  </ul>
+</section>
 {% else %}
 <section class="my-18 max-w-130">
   <h2>Was suchst du?</h2>

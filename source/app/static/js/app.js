@@ -8,9 +8,11 @@
   "use strict";
 
   // Bis November 2026 hieß das Tool „Ebay Watcher“. Was der Browser sich unter dem alten Namen gemerkt hat
-  // (Ansicht, Seitengröße, Sortierung), einmal unter dem neuen Namen übernehmen.
+  // (Seitengröße, Sortierung), einmal unter dem neuen Namen übernehmen. Die Ansicht „Karten/Liste“ der
+  // Übersicht gibt es seit Issue #14 nicht mehr; ihr gemerkter Wert fliegt raus.
   try {
-    ["view", "page-size", "sort"].forEach(function (name) {
+    ["ebay-watcher-view", "heuhaufen-view"].forEach(function (key) { localStorage.removeItem(key); });
+    ["page-size", "sort"].forEach(function (name) {
       var old = localStorage.getItem("ebay-watcher-" + name);
       if (old === null) return;
       if (localStorage.getItem("heuhaufen-" + name) === null) localStorage.setItem("heuhaufen-" + name, old);
@@ -19,50 +21,6 @@
   } catch (error) {
     // Speicher gesperrt (privates Surfen): dann gelten die Vorgaben
     console.info("Heuhaufen: gemerkte Einstellungen nicht übernommen (" + error.name + ")");
-  }
-
-  // ------------------------------------------------------------------
-  // Übersicht: Karten oder Liste (wird auf diesem Gerät gemerkt)
-  // Schaltet das Attribut data-view um; die Klassen view-cards:… und view-list:… reagieren darauf.
-
-  var collection = document.querySelector("[data-collection]");
-  var viewButtons = document.querySelectorAll("button[data-set-view]");
-  var VIEW_KEY = "heuhaufen-view";
-
-  // Im privaten Surfen kann der Browser den Speicher sperren. Dann gilt einfach die Standardansicht,
-  // und in der Browser-Konsole steht ein kurzer Hinweis.
-  function rememberView(view) {
-    try {
-      localStorage.setItem(VIEW_KEY, view);
-    } catch (error) {
-      console.info("Heuhaufen: Ansicht wird nicht gespeichert (" + error.name + ")");
-    }
-  }
-
-  function savedView() {
-    try {
-      return localStorage.getItem(VIEW_KEY);
-    } catch (error) {
-      console.info("Heuhaufen: gespeicherte Ansicht nicht lesbar (" + error.name + ")");
-      return null;
-    }
-  }
-
-  function setView(view) {
-    if (!collection) return;
-    collection.setAttribute("data-view", view);
-    viewButtons.forEach(function (b) {
-      b.setAttribute("aria-pressed", String(b.dataset.setView === view));
-    });
-    rememberView(view);
-  }
-
-  if (collection) {
-    var saved = savedView();
-    if (saved === "list" || saved === "cards") setView(saved);
-    viewButtons.forEach(function (b) {
-      b.addEventListener("click", function () { setView(b.dataset.setView); });
-    });
   }
 
   // ------------------------------------------------------------------

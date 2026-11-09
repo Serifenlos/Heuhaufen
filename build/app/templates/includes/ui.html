@@ -136,6 +136,11 @@ font-num tabular-nums
 </span> <span class="whitespace-nowrap">({{ end_clock(end_time, now) }})</span>
 {%- endmacro %}
 
+{# Nur die Restzeit „0:41“, z. B. für die Übersicht. Aktualisiert wie countdown_span; size: weitere Klassen #}
+{% macro countdown_time(end_time, now, seconds=600, size='') -%}
+<span data-end="{{ end_time|int }}" data-seconds="{{ seconds|int }}"><span class="{{ num() }} data-soon:font-semibold data-soon:text-tight {{ size }}" data-left {% if end_time - now < 3600 %}data-soon{% endif %}>{{ countdown(end_time, now, seconds) }}</span></span>
+{%- endmacro %}
+
 {% macro csrf_field(csrf) -%}
 <input type="hidden" name="csrf" value="{{ csrf }}">
 {%- endmacro %}

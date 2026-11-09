@@ -499,7 +499,10 @@ async def dashboard(request: Request):
         for s in searches
     ]
     overviews.sort(key=util.dashboard_order)
-    return render(request, "dashboard.html", active="searches", searches=overviews,
+    # „Als Nächstes endet“: die nächsten Auktionen unter dem Limit über alle aktiven Gesuche (Issue #14)
+    upcoming = sorted(((v, o) for o in overviews if o["active"] for v in o["matches"] if v["auction"] and v["end_time"]),
+                      key=lambda pair: pair[0]["end_time"])[:4]
+    return render(request, "dashboard.html", active="searches", searches=overviews, upcoming=upcoming,
                   notices=_notices(request), last_tick=watcher.last_tick, now=now)
 
 

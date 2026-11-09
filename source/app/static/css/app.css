@@ -125,18 +125,7 @@
 }
 
 
-/* ------------------------------------------------------------------ 4. Ansicht „Karten“ und „Liste“ */
-
-/*
- * Die Übersicht trägt data-view="cards" oder data-view="list" (umgeschaltet per JavaScript).
- * Mit diesen Varianten gilt eine Klasse nur in einer der beiden Ansichten:
- *   view-cards:mt-3.5   view-list:hidden
- */
-@custom-variant view-cards (&:where([data-view="cards"], [data-view="cards"] *));
-@custom-variant view-list (&:where([data-view="list"], [data-view="list"] *));
-
-
-/* ------------------------------------------------------------------ 5. Grundstile */
+/* ------------------------------------------------------------------ 4. Grundstile */
 
 @layer base {
   html {
@@ -184,7 +173,7 @@
 }
 
 
-/* ------------------------------------------------------------------ 6. Bilder-Galerie */
+/* ------------------------------------------------------------------ 5. Bilder-Galerie */
 
 /*
  * Ist am Rechner die Seitenleiste offen (app.js setzt data-panel an PhotoSwipe), rückt der Pfeil

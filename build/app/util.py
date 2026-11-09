@@ -264,6 +264,9 @@ def ending_first(v: dict) -> tuple:
     return (v.get("end_time") is None, v.get("end_time") or 0, v.get("total") or 0)
 
 
+NEW_FOR = 86400   # „neu“ auf der Übersicht: in den letzten 24 Stunden gefunden
+
+
 def search_overview(search: dict, items: list[dict], now: float, hidden: set[str] | None = None) -> dict:
     hidden = hidden or set()
     views = [
@@ -287,6 +290,7 @@ def search_overview(search: dict, items: list[dict], now: float, hidden: set[str
         "has_distance": any(v.get("distance_km") is not None for v in within),
         "feature": feature,
         "count": len(within),
+        "new_count": sum(1 for v in within if (v.get("first_seen") or 0) > now - NEW_FOR),
         "initial": (search["name"] or search["query"] or "?").strip()[:1].upper(),
     }
 
