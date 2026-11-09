@@ -1,6 +1,7 @@
 {#
   Ein Angebot in einer Liste auf der Detailseite.
-  Erwartet: v (Angebot), sid (Gesuch), kind ("matches", "over" oder "hidden"), csrf, now
+  Erwartet: v (Angebot, mit search_id), kind ("matches", "over" oder "hidden"), csrf, now.
+  v.search_title (nur in der Liste „Alle Angebote“): zu welchem Gesuch das Angebot gehört.
   Vorschaubild und Titel öffnen die Galerie (data-gallery). Die Galerie blendet über form[data-hide] aus.
   Die data-sort-…-Attribute nutzt das Sortieren im Browser (app.js).
   v.market: Durchschnittspreis aus market.py (fehlt, wenn es nicht genug Vergleich gibt).
@@ -33,6 +34,7 @@
         <span class="line-clamp-2 leading-[1.35] font-medium group-hover/offer:underline group-hover/offer:decoration-1 group-hover/offer:underline-offset-3">{{ v.title }}</span>
         <span class="text-sm text-muted">{{ v.kind }}{% if v.auction %}, {{ v.bid_count or 0 }} {{ 'Gebot' if v.bid_count == 1 else 'Gebote' }}{% endif %}
           {%- if v.condition %} · <span data-defect="{{ 'true' if v.defect else 'false' }}" class="data-[defect=true]:font-medium data-[defect=true]:text-over" title="{{ v.condition_full }}">{{ v.condition }}</span>{% endif %}</span>
+        {% if v.search_title %}<span class="truncate text-meta text-muted">Gesuch „{{ v.search_title }}“</span>{% endif %}
         {% for flag in v.flags %}<span class="text-meta font-medium text-tight">{{ flag }}</span>{% endfor %}
       </span>
       <span class="grid justify-items-start gap-1 text-left md:justify-items-end md:text-right">
@@ -59,12 +61,12 @@
     </a>
   </div>
   {% if kind == 'hidden' %}
-  <form method="post" action="/searches/{{ sid }}/unhide" class="mt-4 md:mt-0">
+  <form method="post" action="/searches/{{ v.search_id }}/unhide" class="mt-4 md:mt-0">
     {{ ui.csrf_field(csrf) }}<input type="hidden" name="item_id" value="{{ v.item_id }}">
     <button class="{{ ui.icon_button() }}" type="submit" title="Wieder einblenden" aria-label="Wieder einblenden">{{ ui.icon('eye') }}</button>
   </form>
   {% else %}
-  <form method="post" action="/searches/{{ sid }}/hide" class="mt-4 md:mt-0" data-hide>
+  <form method="post" action="/searches/{{ v.search_id }}/hide" class="mt-4 md:mt-0" data-hide>
     {{ ui.csrf_field(csrf) }}<input type="hidden" name="item_id" value="{{ v.item_id }}">
     <button class="{{ ui.icon_button() }}" type="submit" title="Ausblenden" aria-label="Ausblenden">{{ ui.icon('eye-off') }}</button>
   </form>

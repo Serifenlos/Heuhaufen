@@ -342,12 +342,36 @@
       "oAP" : "\/build\/app\/templates\/includes\/offer.html",
       "oF" : 0
     },
+    "\/source\/app\/templates\/includes\/overview_switch.html" : {
+      "cB" : 0,
+      "ft" : 8192,
+      "hM" : 0,
+      "oA" : 0,
+      "oAP" : "\/build\/app\/templates\/includes\/overview_switch.html",
+      "oF" : 0
+    },
+    "\/source\/app\/templates\/includes\/sort_control.html" : {
+      "cB" : 0,
+      "ft" : 8192,
+      "hM" : 0,
+      "oA" : 0,
+      "oAP" : "\/build\/app\/templates\/includes\/sort_control.html",
+      "oF" : 0
+    },
     "\/source\/app\/templates\/includes\/ui.html" : {
       "cB" : 0,
       "ft" : 8192,
       "hM" : 0,
       "oA" : 0,
       "oAP" : "\/build\/app\/templates\/includes\/ui.html",
+      "oF" : 0
+    },
+    "\/source\/app\/templates\/includes\/undo_toast.html" : {
+      "cB" : 0,
+      "ft" : 8192,
+      "hM" : 0,
+      "oA" : 0,
+      "oAP" : "\/build\/app\/templates\/includes\/undo_toast.html",
       "oF" : 0
     },
     "\/source\/app\/templates\/login_2fa.html" : {
@@ -372,6 +396,14 @@
       "hM" : 0,
       "oA" : 0,
       "oAP" : "\/build\/app\/templates\/message.html",
+      "oF" : 0
+    },
+    "\/source\/app\/templates\/offers.html" : {
+      "cB" : 0,
+      "ft" : 8192,
+      "hM" : 0,
+      "oA" : 0,
+      "oAP" : "\/build\/app\/templates\/offers.html",
       "oF" : 0
     },
     "\/source\/app\/templates\/search_detail.html" : {
@@ -457,7 +489,7 @@
     "displayValueWasSetByUser" : 0,
     "iconImageName" : "brackets-pale",
     "iconImageWasSetByUser" : 0,
-    "lastBuiltDate" : 815910360.056638
+    "lastBuiltDate" : 815911149.398072
   },
   "projectSettings" : {
     "abortBuildOnError" : 1,

@@ -506,6 +506,57 @@ async def dashboard(request: Request):
                   notices=_notices(request), last_tick=watcher.last_tick, now=now)
 
 
+# ---------------------------------------------------------------- Alle Angebote (Issue #9)
+# Alle Angebote unter dem Limit aus allen aktiven Gesuchen des Kontos, nach Ende sortiert (Sofortkauf danach).
+# Reiter: Auktionen, die heute (bis Mitternacht), morgen oder übermorgen enden, Sofortkauf, alles.
+
+OFFER_TABS = {"heute": "Heute", "morgen": "Morgen", "uebermorgen": "Übermorgen", "sofortkauf": "Sofortkauf",
+              "alle": "Alles"}
+
+
+def _offer_tab(v: dict, now: float) -> str | None:
+    """Reiter eines Angebots (außer „alle“): heute, morgen, uebermorgen, sofortkauf oder None (später)."""
+    if not v["auction"] or not v.get("end_time"):
+        return "sofortkauf"
+    return {0: "heute", 1: "morgen", 2: "uebermorgen"}.get(util.days_ahead(v["end_time"], now))
+
+
+async def _offers_page(request: Request, tab: str) -> HTMLResponse:
+    if tab not in OFFER_TABS:
+        return not_found(request)
+    now = time.time()
+    settings = user_settings(request)
+    hidden = db.hidden_ids_by_search()
+    offers: list[dict] = []
+    searches = db.q("SELECT * FROM searches WHERE user_id = ? AND active = 1", (uid(request),))
+    for s in searches:
+        o = util.search_overview(s, db.q("SELECT * FROM items WHERE search_id = ?", (s["id"],)), now, hidden.get(s["id"]))
+        market.attach(o, settings, o["matches"])
+        for v in o["matches"]:
+            v["search_title"] = o["title"]
+            v["tab"] = _offer_tab(v, now)
+            offers.append(v)
+    offers.sort(key=lambda v: (v["end_time"] is None or not v["auction"], v["end_time"] or 0, v["total"] or 0))
+    counts = {key: sum(1 for v in offers if v["tab"] == key) for key in OFFER_TABS}
+    counts["alle"] = len(offers)
+    shown = offers if tab == "alle" else [v for v in offers if v["tab"] == tab]
+    # Leerer Reiter: auf den nächsten zeigen, in dem etwas ist
+    later = next((k for k in ("morgen", "uebermorgen", "sofortkauf", "alle") if counts[k] and k != tab), None)
+    return render(request, "offers.html", active="searches", tab=tab, tabs=OFFER_TABS, counts=counts, offers=shown,
+                  search_count=len(searches), later=later, now=now,
+                  has_distance=any(v.get("distance_km") is not None for v in shown))
+
+
+@app.get("/angebote", response_class=HTMLResponse)
+async def offers_today(request: Request):
+    return await _offers_page(request, "heute")
+
+
+@app.get("/angebote/{tab}", response_class=HTMLResponse)
+async def offers_tab(request: Request, tab: str):
+    return await _offers_page(request, tab)
+
+
 # ---------------------------------------------------------------- Gesuche
 
 def _form_defaults(settings: dict) -> dict:

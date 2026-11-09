@@ -63,6 +63,12 @@ def countdown(end_ts: float | None, now: float | None = None, seconds_below: int
     return f"{hours}:{minutes:02d}"
 
 
+def days_ahead(ts: float, now: float | None = None) -> int:
+    """In wie vielen Kalendertagen ts liegt (Zeitzone TZ): 0 heute (bis Mitternacht), 1 morgen, 2 übermorgen …"""
+    tz = ZoneInfo(config.TZ)
+    return (datetime.fromtimestamp(ts, tz).date() - datetime.fromtimestamp(now or time.time(), tz).date()).days
+
+
 def end_clock(end_ts: float | None, now: float | None = None) -> str:
     """Uhrzeit des Endes, z. B. „um 7:23 Uhr“; ab einem Tag Restlaufzeit mit Wochentag „Mo. um 7:23 Uhr“."""
     if not end_ts:

@@ -1,0 +1,11 @@
+{#
+  Sortierleiste über einer Angebotsliste (Gesuch-Seite, Alle Angebote). Erwartet: has_distance
+#}
+{% import "includes/ui.html" as ui %}
+{# Sortieren passiert im Browser, deshalb ohne JavaScript ausgeblendet (app.js zeigt die Leiste an) #}
+<div class="inline-flex max-w-full gap-0.5 overflow-x-auto rounded-control bg-tile p-0.75" role="group" aria-label="Sortieren" data-sort-control hidden>
+  {# Auf schmalen Bildschirmen steht nur „Neu“, damit die Leiste in eine Zeile passt #}
+  {% for key, text, more in [('end', 'Endet zuerst', ''), ('price', 'Preis', ''), ('new', 'Neu', ' eingestellt')] + ([('distance', 'Entfernung', '')] if has_distance else []) %}
+  <button type="button" data-sort="{{ key }}" aria-pressed="{{ 'true' if key == 'end' else 'false' }}" class="{{ ui.segment() }} aria-pressed:border-line aria-pressed:bg-surface aria-pressed:text-ink">{{ text }}{% if more %}<span class="max-sm:hidden">{{ more }}</span>{% endif %}</button>
+  {% endfor %}
+</div>

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% import "includes/ui.html" as ui %}
+{#
+  Alle Angebote (Issue #9): alle Angebote unter dem Limit aus allen aktiven Gesuchen, nach Ende sortiert,
+  Sofortkauf danach (main._offers_page). Reiter: heute (bis Mitternacht), morgen, übermorgen, Sofortkauf, alles.
+  Die Zeilen sind dieselben wie auf der Seite eines Gesuchs (offer.html), mit dem Namen des Gesuchs.
+#}
+{% block title %}Alle Angebote – {{ app_name }}{% endblock %}
+{% block content %}
+<section class="mt-9 mb-2">
+  <h1>Alle Angebote</h1>
+  <p class="mt-1.5 max-w-[62ch] text-muted"><span class="{{ ui.num() }}">{{ counts.alle }}</span> {{ 'Angebot' if counts.alle == 1 else 'Angebote' }} unter deinem Limit aus {{ search_count }} aktiven {{ 'Gesuch' if search_count == 1 else 'Gesuchen' }}</p>
+</section>
+{% with current = 'offers' %}{% include "includes/overview_switch.html" %}{% endwith %}
+
+{% set tab_link = "inline-flex items-baseline gap-1.5 rounded-full border border-line bg-surface px-3.5 py-1.5 text-ui text-ink-2 no-underline hover:border-control aria-[current=page]:border-ink aria-[current=page]:bg-ink aria-[current=page]:text-canvas" %}
+<nav class="mt-6 flex flex-wrap gap-2" aria-label="Zeitraum">
+  {% for key, label in tabs.items() %}
+  <a class="{{ tab_link }}" href="/angebote{{ '' if key == 'heute' else '/' ~ key }}" {% if key == tab %}aria-current="page"{% endif %}>
+    {{ label }} <span class="{{ ui.num() }} text-meta opacity-75" {% if key == tab %}data-count="matches"{% endif %}>{{ counts[key] }}</span>
+  </a>
+  {% endfor %}
+</nav>
+
+<section class="mt-6" id="treffer" data-list="matches">
+  {% if offers|length > 1 %}<div class="mb-2 flex justify-end">{% include "includes/sort_control.html" %}</div>{% endif %}
+  {% if offers %}
+  {% with kind = 'matches' %}{% include "includes/offer_list.html" %}{% endwith %}
+  {% else %}
+  <p class="mt-2 max-w-[70ch] text-muted">
+    {%- if tab == 'heute' %}Heute endet keine Auktion mehr unter deinem Limit.
+    {%- elif tab == 'morgen' %}Morgen endet keine Auktion unter deinem Limit.
+    {%- elif tab == 'uebermorgen' %}Übermorgen endet keine Auktion unter deinem Limit.
+    {%- elif tab == 'sofortkauf' %}Gerade gibt es keinen Sofortkauf unter deinem Limit.
+    {%- else %}Gerade liegt nichts unter deinem Limit. Heuhaufen sucht weiter und meldet sich.{% endif %}
+    {% if later %} <a href="/angebote/{{ later }}">{{ tabs[later] }} ansehen ({{ counts[later] }})</a>{% endif %}
+  </p>
+  {% endif %}
+</section>
+
+{% include "includes/undo_toast.html" %}
+{% endblock %}

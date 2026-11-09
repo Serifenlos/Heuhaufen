@@ -18,6 +18,7 @@
   </div>
   <a class="{{ ui.button('primary') }}" href="/searches/new">Neues Gesuch</a>
 </section>
+{% if searches %}{% with current = 'searches' %}{% include "includes/overview_switch.html" %}{% endwith %}{% endif %}
 
 {% if notices %}
 <div class="mt-6 grid gap-2">

@@ -1,0 +1,9 @@
+{#
+  Umschalter oben auf der Übersicht und auf „Alle Angebote“ (Issue #9). Erwartet: current = searches | offers
+#}
+{% import "includes/ui.html" as ui %}
+{% set switch_link = ui.segment() ~ " no-underline aria-[current=page]:border-line aria-[current=page]:bg-surface aria-[current=page]:text-ink" %}
+<nav class="mt-5 inline-flex max-w-full gap-0.5 rounded-control bg-tile p-0.75" aria-label="Übersicht">
+  <a class="{{ switch_link }}" href="/" {% if current == 'searches' %}aria-current="page"{% endif %}>Gesuche</a>
+  <a class="{{ switch_link }}" href="/angebote" {% if current == 'offers' %}aria-current="page"{% endif %}>Alle Angebote</a>
+</nav>
