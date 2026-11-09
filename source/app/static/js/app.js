@@ -780,11 +780,13 @@
 
   // ------------------------------------------------------------------
   // Ziehen zum Neuladen (Issue #11). In der Web-App vom Home-Bildschirm (iOS: „Als Web-App öffnen“)
-  // gibt es das nicht von selbst, deshalb nur dort: ganz oben nach unten ziehen, ab PULL_AT loslassen.
+  // gibt es das nicht von selbst, deshalb nur dort: ganz oben nach unten ziehen, nach PULL_DEAD + PULL_AT
+  // loslassen. Nie in Dialogen, in der Galerie oder in Bereichen, die selbst scrollen (Kategorienliste).
   // Dazu: Wer nach AWAY_RELOAD zur App zurückkehrt, bekommt die Seite frisch, außer bei offenen
-  // Eingaben oder offener Galerie. Neu geladen wird data-reload (main.reload_url), nie ein Formular.
+  // Eingaben, offenem Dialog oder offener Galerie. Neu geladen wird data-reload (main.reload_url), nie ein Formular.
 
-  var PULL_AT = 80;                    // Fingerweg in px
+  var PULL_DEAD = 24;                  // die ersten px Fingerweg: noch nichts (versehentliches Ziehen)
+  var PULL_AT = 140;                   // danach so weit ziehen, zusammen gut 160 px (etwa 2,5–3 cm)
   var AWAY_RELOAD = 5 * 60 * 1000;     // ms
   var pull = document.querySelector("[data-pull]");
   var standalone = window.navigator.standalone === true ||
@@ -799,8 +801,22 @@
     return !!document.querySelector(".pswp--open");
   }
 
+  function dialogOpen() {
+    return !!document.querySelector("dialog[open]");
+  }
+
+  // Liegt der Finger in einem Bereich, der selbst nach oben/unten scrollt?
+  function inScrollArea(el) {
+    for (; el && el.nodeType === 1 && el !== document.body && el !== document.documentElement; el = el.parentElement) {
+      var overflow = window.getComputedStyle(el).overflowY;
+      if ((overflow === "auto" || overflow === "scroll") && el.scrollHeight > el.clientHeight + 1) return true;
+    }
+    return false;
+  }
+
   function noPull(target) {
-    return galleryOpen() || !!(target.closest && target.closest(".pswp, input, textarea, select"));
+    return galleryOpen() || dialogOpen() || inScrollArea(target) ||
+      !!(target.closest && target.closest(".pswp, dialog, input, textarea, select"));
   }
 
   if (pull && standalone) {
@@ -838,13 +854,14 @@
       if (!tracking) return;
       var dx = e.touches[0].clientX - startX;
       var dy = e.touches[0].clientY - startY;
-      // nach oben gescrollt oder seitlich gewischt: kein Neuladen
-      if (window.scrollY > 0 || dy < -8 || (distance < 12 && Math.abs(dx) > 12 && Math.abs(dx) > dy)) {
+      // nach oben gescrollt, seitlich gewischt oder ein Dialog ging auf: kein Neuladen
+      if (window.scrollY > 0 || dy < -8 || dialogOpen() || (dy < PULL_DEAD && Math.abs(dx) > 12 && Math.abs(dx) > dy)) {
         tracking = false;
         if (distance > 0) hidePull();
         return;
       }
-      distance = Math.max(0, dy);
+      distance = Math.max(0, dy - PULL_DEAD);
+      if (!distance && pull.hidden) return;
       pull.setAttribute("data-dragging", "");
       showPull(distance);
     }, { passive: true });
@@ -871,13 +888,16 @@
 
   if (standalone) {
     var hiddenAt = 0;
-    document.addEventListener("input", function (e) {
-      if (e.target.closest && e.target.closest("form")) formTouched = true;
+    var touched = function () { formTouched = true; };   // Eingaben, Häkchen, Kategorien …
+    document.addEventListener("input", touched);
+    document.addEventListener("change", touched);
+    document.addEventListener("click", function (e) {   // z. B. Kategorie-Chip entfernt
+      if (e.target.closest && e.target.closest("form button[type=button]")) touched();
     });
     document.addEventListener("visibilitychange", function () {
       if (document.visibilityState === "hidden") {
         hiddenAt = Date.now();
-      } else if (hiddenAt && Date.now() - hiddenAt >= AWAY_RELOAD && !formTouched && !galleryOpen()) {
+      } else if (hiddenAt && Date.now() - hiddenAt >= AWAY_RELOAD && !formTouched && !galleryOpen() && !dialogOpen()) {
         reloadPage();
       }
     });
