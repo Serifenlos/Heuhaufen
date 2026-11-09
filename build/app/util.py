@@ -46,8 +46,9 @@ def eur(value: float | None, cents: bool = True, sign: bool = True) -> str:
 
 
 def countdown(end_ts: float | None, now: float | None = None, seconds_below: int = 600) -> str:
-    """Restlaufzeit in Stunden:Minuten, z. B. „8:54“, ab einem Tag „2 Tg 3:20“, kurz vor Ende
-    (unter seconds_below, Vorgabe die Erinnerung des Gesuchs) mit Sekunden „0:09:42“. Gleiche Regeln in app.js."""
+    """Restlaufzeit mit „h“ zwischen Stunden und Minuten, z. B. „8h54“, ab einem Tag „1 Tag 3h20“ bzw.
+    „2 Tagen 3h20“ (steht immer hinter „in“), kurz vor Ende (unter seconds_below, Vorgabe die Erinnerung
+    des Gesuchs) mit Sekunden „0h09:42“. Gleiche Regeln in app.js."""
     if not end_ts:
         return ""
     left = int(end_ts - (now or time.time()))
@@ -57,10 +58,10 @@ def countdown(end_ts: float | None, now: float | None = None, seconds_below: int
     hours, rest = divmod(rest, 3600)
     minutes, seconds = divmod(rest, 60)
     if days >= 1:
-        return f"{days} Tg {hours}:{minutes:02d}"
+        return f"{days} {'Tag' if days == 1 else 'Tagen'} {hours}h{minutes:02d}"
     if left < seconds_below:
-        return f"{hours}:{minutes:02d}:{seconds:02d}"
-    return f"{hours}:{minutes:02d}"
+        return f"{hours}h{minutes:02d}:{seconds:02d}"
+    return f"{hours}h{minutes:02d}"
 
 
 def days_ahead(ts: float, now: float | None = None) -> int:

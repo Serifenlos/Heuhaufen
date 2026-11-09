@@ -77,7 +77,7 @@ grid size-9 flex-none cursor-pointer place-items-center rounded-full text-muted 
 inline-grid size-10.5 flex-none cursor-pointer place-items-center rounded-control border border-line bg-surface text-ink-2 no-underline hover:border-control hover:text-ink
 {%- endmacro %}
 
-{# Kleine Symbole, 18 px. name: eye | eye-off | pencil | search | pause | play #}
+{# Kleine Symbole, 18 px. name: eye | eye-off | pencil | search | pause | play | prev | next #}
 {% macro icon(name) -%}
 <svg class="size-4.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
   {% if name == 'eye' %}
@@ -90,6 +90,10 @@ inline-grid size-10.5 flex-none cursor-pointer place-items-center rounded-contro
   <rect x="6.5" y="5" width="3.5" height="14" rx="1" fill="currentColor" stroke="none"/><rect x="14" y="5" width="3.5" height="14" rx="1" fill="currentColor" stroke="none"/>
   {% elif name == 'play' %}
   <path d="M8 5.5v13l10.5-6.5z" fill="currentColor"/>
+  {% elif name == 'prev' %}
+  <path d="M14.5 5.5L8 12l6.5 6.5"/>
+  {% elif name == 'next' %}
+  <path d="M9.5 5.5L16 12l-6.5 6.5"/>
   {% else %}
   <path d="M9.9 5.2A10.6 10.6 0 0 1 12 5c6.4 0 10 7 10 7a17.6 17.6 0 0 1-2.6 3.5M6.6 6.6C3.8 8.3 2 12 2 12s3.6 7 10 7a10 10 0 0 0 5.4-1.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M3 3l18 18"/>
   {% endif %}
@@ -125,20 +129,34 @@ font-num tabular-nums
 
 {# Restlaufzeit, wird per JavaScript aktualisiert und färbt sich in der letzten Stunde #}
 {#
-  Restlaufzeit „endet in 8:54 (um 7:23 Uhr)“. app.js hält die Zeit aktuell (data-end, data-left), in der
+  Restlaufzeit „endet in 8h54 (um 7:23 Uhr)“. app.js hält die Zeit aktuell (data-end, data-left), in der
   letzten Stunde hervorgehoben (data-soon), unter seconds (Erinnerung des Gesuchs) mit Sekunden. cap: „Endet“.
+  Müsste die Zeile umbrechen oder würde sie abgeschnitten, lässt app.js „endet“ weg: „in 2 Tagen 7h13 (…)“.
+  Dazu trägt die Zeile, in der die Restzeit steht, data-fit (z. B. includes/offer.html).
 #}
 {% macro countdown_span(end_time, now, seconds=600, cap=false) -%}
 {%- set left = end_time - now -%}
 <span data-end="{{ end_time|int }}" data-seconds="{{ seconds|int }}"{% if cap %} data-cap{% endif %}>
-  {%- if left > 0 %}{{ 'Endet' if cap else 'endet' }} in <span class="{{ num() }} data-soon:font-semibold data-soon:text-tight" data-left {% if left < 3600 %}data-soon{% endif %}>{{ countdown(end_time, now, seconds) }}</span>
+  {%- if left > 0 %}{{ endet_in(cap) }} {{ left_time(end_time, now, seconds) }}
   {%- else %}{{ 'Beendet' if cap else 'beendet' }}{% endif -%}
 </span> <span class="whitespace-nowrap">({{ end_clock(end_time, now) }})</span>
 {%- endmacro %}
 
-{# Nur die Restzeit „0:41“, z. B. für die Übersicht. Aktualisiert wie countdown_span; size: weitere Klassen #}
-{% macro countdown_time(end_time, now, seconds=600, size='') -%}
-<span data-end="{{ end_time|int }}" data-seconds="{{ seconds|int }}"><span class="{{ num() }} data-soon:font-semibold data-soon:text-tight {{ size }}" data-left {% if end_time - now < 3600 %}data-soon{% endif %}>{{ countdown(end_time, now, seconds) }}</span></span>
+{#
+  Nur die Restzeit „0h41“, z. B. für die Übersicht. Aktualisiert wie countdown_span; size: weitere Klassen,
+  label: „endet in“ davor (entfällt bei Platzmangel wie oben).
+#}
+{% macro countdown_time(end_time, now, seconds=600, size='', label=false) -%}
+<span data-end="{{ end_time|int }}" data-seconds="{{ seconds|int }}">{% if label %}<span class="text-muted">{{ endet_in() }}</span> {% endif %}{{ left_time(end_time, now, seconds, size) }}</span>
+{%- endmacro %}
+
+{# „endet in“; app.js blendet „endet“ aus (data-endet) und schreibt bei cap „In“ groß (data-cap-in) #}
+{% macro endet_in(cap=false) -%}
+<span data-endet>{{ 'Endet' if cap else 'endet' }} </span>{% if cap %}<span data-cap-in>in</span>{% else %}in{% endif %}
+{%- endmacro %}
+
+{% macro left_time(end_time, now, seconds=600, size='') -%}
+<span class="{{ num() }} whitespace-nowrap data-soon:font-semibold data-soon:text-tight {{ size }}" data-left {% if end_time - now < 3600 %}data-soon{% endif %}>{{ countdown(end_time, now, seconds) }}</span>
 {%- endmacro %}
 
 {% macro csrf_field(csrf) -%}

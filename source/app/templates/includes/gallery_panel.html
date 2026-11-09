@@ -6,17 +6,24 @@
   läuft der Text (data-sheet-body) weiter. Herunterschieben macht die Galerie wieder groß. Der Griff oben
   (data-sheet-handle) schiebt die Schublade ganz auf oder zu. Das Schieben steuert app.js selbst: Ein
   durchsichtiger Bildlauf über der Galerie (pointer-events: none) ließ sich in Safari auf dem iPhone nicht schieben.
+  Blättern (Issue #10): Wischen nach links oder rechts zeigt das nächste bzw. vorige Angebot der Liste, am
+  Rechner auch die Pfeile oben. data-offer-nav füllt app.js („Angebot 3 von 17“), ohne Liste bleibt es verborgen.
   Erwartet: v (Angebot wie in der Liste), d (details.load, kann fehlen), now, gone, prices_with_shipping
 #}
 {% import "includes/ui.html" as ui %}
 {% set shown = v.gross if prices_with_shipping else v.rel_price %}
-<aside class="absolute z-10 flex flex-col overflow-hidden bg-surface text-ink
+<aside class="absolute z-10 flex touch-pan-y flex-col overflow-hidden bg-surface text-ink
               max-lg:inset-x-0 max-lg:bottom-0 max-lg:h-[40dvh] max-lg:rounded-t-tile max-lg:shadow-[0_-8px_30px_rgba(0,0,0,0.35)]
               lg:top-15 lg:right-0 lg:bottom-0 lg:w-95 lg:border-l lg:border-line"
        data-gallery-panel aria-label="Angaben zum Angebot">
   <button class="flex w-full flex-none cursor-pointer justify-center pt-2.5 pb-1.5 lg:hidden" type="button" data-sheet-handle aria-label="Angaben ganz hochschieben oder zurück">
     <span class="h-1 w-10 rounded-full bg-control"></span>
   </button>
+  <div class="flex flex-none items-center justify-between gap-2 max-lg:pointer-events-none max-lg:absolute max-lg:top-1.5 max-lg:right-4 lg:border-b lg:border-line lg:px-2 lg:py-1.5" data-offer-nav hidden>
+    <button class="{{ ui.icon_button() }} disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent max-lg:hidden" type="button" data-offer-step="-1" title="Voriges Angebot" aria-label="Voriges Angebot">{{ ui.icon('prev') }}</button>
+    <span class="{{ ui.num() }} text-meta text-muted max-lg:text-[11.5px] max-lg:leading-4" data-offer-pos aria-live="polite"></span>
+    <button class="{{ ui.icon_button() }} disabled:cursor-default disabled:opacity-35 disabled:hover:bg-transparent max-lg:hidden" type="button" data-offer-step="1" title="Nächstes Angebot" aria-label="Nächstes Angebot">{{ ui.icon('next') }}</button>
+  </div>
   <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain" data-sheet-body>
   <div class="grid gap-3 px-5 pt-1 pb-8 lg:gap-4 lg:pt-5">
     <div class="grid gap-3 lg:gap-4" data-sheet-peek>
@@ -41,7 +48,7 @@
             {%- if d and d.bidders and v.bid_count %} von {{ d.bidders }} {{ 'Bieter' if d.bidders == 1 else 'Bietern' }}{% endif %}
           {%- endif -%}
         </p>
-        {% if v.auction and v.end_time %}<p>{{ ui.countdown_span(v.end_time, now, v.lead_seconds, cap=true) }}</p>{% endif %}
+        {% if v.auction and v.end_time %}<p data-fit>{{ ui.countdown_span(v.end_time, now, v.lead_seconds, cap=true) }}</p>{% endif %}
         {% if v.auction and d and d.min_bid and not gone %}<p>Nächstes Gebot ab {{ eur(d.min_bid) }}</p>{% endif %}
         {% if v.auction and d and d.reserve_met == 0 %}<p class="font-medium text-tight">Mindestpreis noch nicht erreicht</p>{% endif %}
         {% if gone %}<p class="font-medium text-over">Dieses Angebot ist bei {{ v.platform_name }} nicht mehr verfügbar.</p>{% endif %}

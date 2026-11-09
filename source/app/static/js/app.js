@@ -25,7 +25,7 @@
 
   // ------------------------------------------------------------------
   // Restlaufzeiten aktuell halten (ui.countdown_span), gleiche Regeln wie util.countdown:
-  // „8:54“, ab einem Tag „2 Tg 3:20“, unter data-seconds (Erinnerung des Gesuchs) „0:09:42“.
+  // „8h54“, ab einem Tag „1 Tag 3h20“ bzw. „2 Tagen 3h20“, unter data-seconds (Erinnerung des Gesuchs) „0h09:42“.
   // In der letzten Stunde bekommt die Zeit data-soon, das die Klassen data-soon:… hervorheben.
 
   function pad(n) {
@@ -37,9 +37,9 @@
     var rest = left % 86400;
     var hours = Math.floor(rest / 3600);
     var minutes = Math.floor((rest % 3600) / 60);
-    if (days >= 1) return days + " Tg " + hours + ":" + pad(minutes);
-    if (left < secondsBelow) return hours + ":" + pad(minutes) + ":" + pad(rest % 60);
-    return hours + ":" + pad(minutes);
+    if (days >= 1) return days + (days === 1 ? " Tag " : " Tagen ") + hours + "h" + pad(minutes);
+    if (left < secondsBelow) return hours + "h" + pad(minutes) + ":" + pad(rest % 60);
+    return hours + "h" + pad(minutes);
   }
 
   function tick() {
@@ -53,12 +53,67 @@
       }
       if (!time) return;
       var text = format(left, Number(el.dataset.seconds) || 600);
-      if (time.textContent !== text) time.textContent = text;
+      if (time.textContent !== text) {
+        var resized = time.textContent.length !== text.length;
+        time.textContent = text;
+        var line = resized ? time.closest("[data-fit]") : null;
+        if (line) fitLine(line);
+      }
       time.toggleAttribute("data-soon", left < 3600);
     });
   }
 
+  // Wird eine Zeile mit „endet in …“ zu knapp (sie müsste umbrechen oder würde abgeschnitten), entfällt
+  // „endet“: „in 2 Tagen 7h13“ (ui.endet_in, die Zeile trägt data-fit). Gemessen wird, sobald die Zeile zu
+  // sehen ist und wenn sich ihre Breite ändert (ResizeObserver), außerdem wenn die Zeit länger oder kürzer wird.
+  function shorten(line, short) {
+    line.querySelectorAll("[data-endet]").forEach(function (word) { word.hidden = short; });
+    line.querySelectorAll("[data-cap-in]").forEach(function (word) { word.textContent = short ? "In" : "in"; });
+  }
+
+  function fitLine(line) {
+    if (!line.querySelector("[data-endet]")) return;
+    shorten(line, false);
+    var room = line.clientWidth;
+    if (!room) return;   // gerade nicht zu sehen (andere Seite, zugeklappt)
+    var wrap = line.style.whiteSpace;
+    line.style.whiteSpace = "nowrap";   // so lang wäre die Zeile ohne Umbruch
+    var tight = line.scrollWidth > room + 1;
+    line.style.whiteSpace = wrap;
+    if (tight) shorten(line, true);
+  }
+
+  // Beobachtet werden die Zeile und ihr Elternelement: Ist die Zeile nur so breit wie ihr Text, ändert sich
+  // ihre eigene Größe nicht, wenn rundherum mehr Platz entsteht.
+  var fitObserver = window.ResizeObserver ? new window.ResizeObserver(function (entries) {
+    window.requestAnimationFrame(function () {   // erst im nächsten Bild ändern, sonst meldet der Browser eine Schleife
+      entries.forEach(function (entry) {
+        var box = entry.target;
+        if (box.hasAttribute("data-fit")) fitLine(box);
+        else box.querySelectorAll(":scope > [data-fit]").forEach(fitLine);
+      });
+    });
+  }) : null;
+
+  function watchFits(root) {
+    root.querySelectorAll("[data-fit]").forEach(function (line) {
+      if (!fitObserver) {
+        fitLine(line);
+        return;
+      }
+      fitObserver.observe(line);
+      if (line.parentElement) fitObserver.observe(line.parentElement);
+    });
+  }
+
+  if (!fitObserver) {
+    window.addEventListener("resize", function () {
+      document.querySelectorAll("[data-fit]").forEach(fitLine);
+    });
+  }
+
   tick();
+  watchFits(document);
   setInterval(tick, 1000);   // jede Sekunde, damit kurz vor Ende die Sekunden laufen
 
   // ------------------------------------------------------------------
@@ -271,6 +326,7 @@
         applySort(currentSort(), target);
         bindHideForms(target);
         tick();
+        watchFits(target);
       })
       .catch(function (error) {
         fold.removeAttribute("data-loaded");
@@ -413,12 +469,35 @@
     return photoSwipe;
   }
 
+  // Antworten von /galerie/… eine Minute aufheben: Beim Blättern (unten) lädt das Nachbarangebot schon,
+  // während man wischt, und wer zurückblättert, muss nicht noch einmal warten.
+  var GALLERY_CACHE = 60000;
+  var galleryCache = {};
+
   function loadImages(link) {
-    return fetch(link.dataset.gallery, { credentials: "same-origin", headers: { Accept: "application/json" } })
+    var url = link.dataset.gallery;
+    var hit = galleryCache[url];
+    if (hit && Date.now() - hit.at < GALLERY_CACHE) return hit.promise;
+    var promise = fetch(url, { credentials: "same-origin", headers: { Accept: "application/json" } })
       .then(function (response) {
         if (!response.ok) throw new Error("HTTP " + response.status);
         return response.json();
       });
+    galleryCache[url] = { at: Date.now(), promise: promise };
+    promise.catch(function () { delete galleryCache[url]; });
+    return promise;
+  }
+
+  // Vorab laden, samt erstem Bild
+  function warmGallery(link) {
+    if (!link) return;
+    loadImages(link)
+      .then(function (data) {
+        if (!data.items || !data.items[0]) return;
+        var image = new window.Image();
+        image.src = data.items[0].src;
+      })
+      .catch(function () { /* beim Öffnen wird es noch einmal versucht */ });
   }
 
   // Am Handy ist die Seitenleiste eine Schublade am unteren Rand (includes/gallery_panel.html). s.top ist ihre
@@ -438,9 +517,11 @@
     return { top: 56, bottom: pswp.element.clientHeight - s.top + 8, left: 0, right: 0 };
   }
 
-  function addPanel(pswp, html) {
+  // row: Zeile der Liste, aus der die Galerie kam (zum Blättern, addFlip). carry: kommt man durch Blättern
+  // hierher (openGallery), steht darin, wie weit die Schublade offen war.
+  function addPanel(pswp, html, carry, row) {
     var s = { panel: null, body: null, peek: null, info: null, top: 0, peekHeight: 0, frame: 0, anim: 0, drag: null,
-              zoomHidden: false, zoomLevel: null };
+              zoomHidden: false, zoomLevel: null, flip: null };
     pswp.options.paddingFn = function () { return galleryPadding(pswp, s); };
 
     // Bild an die Schublade anpassen, höchstens einmal je Bildschirmaufbau
@@ -473,7 +554,8 @@
     }
 
     // Größe neu bestimmen (Öffnen, Drehen, Fenstergröße, Ein- und Ausblenden): am Rechner Leiste rechts, am
-    // Handy Schublade. Die Schublade bleibt, wo sie war; nur beim ersten Mal schaut nur der Kopf heraus.
+    // Handy Schublade. Die Schublade bleibt, wo sie war; nur beim ersten Mal schaut nur der Kopf heraus,
+    // außer man hat hierher geblättert: dann so weit offen wie beim vorigen Angebot.
     function relayout() {
       if (!s.panel) return;
       if (wideGallery.matches) {
@@ -482,11 +564,19 @@
         var first = !s.peekHeight;
         s.peekHeight = s.peek.getBoundingClientRect().bottom - s.panel.getBoundingClientRect().top + s.body.scrollTop + 20;
         var b = sheetBounds(pswp, s);
-        s.top = first ? b.peekTop : Math.min(b.peekTop, Math.max(b.minTop, s.top));
+        var top = s.top;
+        if (first) top = !carry || carry.sheet === "peek" ? b.peekTop : carry.sheet === "open" ? b.minTop : carry.top;
+        s.top = Math.min(b.peekTop, Math.max(b.minTop, top));
         s.panel.style.height = (b.height - s.top) + "px";
       }
       pswp.updateSize(true);
     }
+
+    // Wie weit die Schublade offen ist, fürs nächste Angebot beim Blättern
+    s.sheetState = function () {
+      var b = sheetBounds(pswp, s);
+      return { sheet: s.top >= b.peekTop - 1 ? "peek" : s.top <= b.minTop + 1 ? "open" : "", top: s.top };
+    };
 
     function showPanel(show) {
       s.panel.hidden = !show;
@@ -532,50 +622,80 @@
     });
 
     // Wischen auf der Schublade: erst die Schublade schieben, ist sie oben, den Text scrollen (das macht der
-    // Browser). Zurück nach unten geht es, sobald der Text wieder am Anfang steht.
+    // Browser). Zurück nach unten geht es, sobald der Text wieder am Anfang steht. Seitlich gewischt (auch
+    // in der Leiste am Rechner, z. B. auf dem iPad) blättert zum nächsten oder vorigen Angebot (s.flip).
     function onTouchStart(event) {
-      if (wideGallery.matches || event.touches.length !== 1) { s.drag = null; return; }
+      if (event.touches.length !== 1 || (wideGallery.matches && !s.flip)) { s.drag = null; return; }
       window.cancelAnimationFrame(s.anim);
-      var y = event.touches[0].clientY;
-      s.drag = { y0: y, top0: s.top, scroll0: s.body.scrollTop, mode: "", samples: [{ y: y, t: event.timeStamp }] };
+      var t = event.touches[0];
+      s.drag = { x0: t.clientX, y0: t.clientY, top0: s.top, scroll0: s.body.scrollTop, mode: "",
+                 samples: [{ x: t.clientX, y: t.clientY, t: event.timeStamp }] };
     }
 
     function onTouchMove(event) {
       var d = s.drag;
       if (!d) return;
+      var x = event.touches[0].clientX;
       var y = event.touches[0].clientY;
       var b = sheetBounds(pswp, s);
       if (!d.mode) {
-        // gleich bei der ersten Bewegung entscheiden, sonst fängt Safari schon an, den Text zu scrollen
-        if (y === d.y0) return;
-        var open = s.top <= b.minTop + 1;
-        d.mode = !open || (y > d.y0 && s.body.scrollTop <= 0) ? "sheet" : "text";
+        var dx = Math.abs(x - d.x0);
+        var dy = Math.abs(y - d.y0);
+        if (s.flip && dx > dy) {
+          if (dx < 6) return;   // erst ein paar Pixel abwarten, ob es wirklich seitwärts geht
+          d.mode = "offer";
+        } else if (wideGallery.matches) {
+          if (dy) s.drag = null;   // Leiste rechts: den Text scrollt der Browser
+          return;
+        } else {
+          // gleich bei der ersten Bewegung entscheiden, sonst fängt Safari schon an, den Text zu scrollen
+          if (y === d.y0) return;
+          var open = s.top <= b.minTop + 1;
+          d.mode = !open || (y > d.y0 && s.body.scrollTop <= 0) ? "sheet" : "text";
+        }
+      }
+      d.samples.push({ x: x, y: y, t: event.timeStamp });
+      if (d.samples.length > 5) d.samples.shift();
+      if (d.mode === "offer") {
+        event.preventDefault();
+        s.flip.follow(x - d.x0);
+        return;
       }
       if (d.mode !== "sheet") return;
       event.preventDefault();
       var want = d.top0 + (y - d.y0);
       if (want < b.minTop) s.body.scrollTop = d.scroll0 + (b.minTop - want);   // oben angekommen: Text weiter
       setTop(want);
-      d.samples.push({ y: y, t: event.timeStamp });
-      if (d.samples.length > 5) d.samples.shift();
     }
 
     function onTouchEnd() {
       var d = s.drag;
       s.drag = null;
-      if (!d || d.mode !== "sheet" || d.samples.length < 2) return;
+      if (!d || d.samples.length < 2) return;
       // Schwung: kräftig nach oben oder unten gewischt, dann ganz auf bzw. zu
       var first = d.samples[0];
       var last = d.samples[d.samples.length - 1];
-      var speed = (last.y - first.y) / Math.max(1, last.t - first.t);
+      var dt = Math.max(1, last.t - first.t);
+      if (d.mode === "offer") {
+        s.flip.release(last.x - d.x0, (last.x - first.x) / dt);
+        return;
+      }
+      if (d.mode !== "sheet") return;
+      var speed = (last.y - first.y) / dt;
       var b = sheetBounds(pswp, s);
       if (speed < -0.4 && s.top > b.minTop) animateTo(b.minTop);
       else if (speed > 0.4 && s.top < b.peekTop) animateTo(b.peekTop);
     }
 
     // Mausrad (schmales Fenster am Rechner): wie Wischen. Nie an PhotoSwipe weitergeben, sonst zoomt das Bild.
+    // Seitlich (Trackpad) blättert zum nächsten oder vorigen Angebot.
     function onWheel(event) {
       event.stopPropagation();
+      if (s.flip && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        event.preventDefault();   // sonst blättert der Browser im Verlauf zurück
+        s.flip.wheel(event.deltaX);
+        return;
+      }
       if (wideGallery.matches) return;
       var b = sheetBounds(pswp, s);
       if ((event.deltaY > 0 && s.top > b.minTop) || (event.deltaY < 0 && s.body.scrollTop <= 0 && s.top < b.peekTop)) {
@@ -613,15 +733,24 @@
           s.panel.addEventListener("touchstart", onTouchStart, { passive: true });
           s.panel.addEventListener("touchmove", onTouchMove, { passive: false });
           s.panel.addEventListener("touchend", onTouchEnd);
-          s.panel.addEventListener("touchcancel", onTouchEnd);
+          s.panel.addEventListener("touchcancel", function () {
+            if (s.drag && s.drag.mode === "offer") {   // abgebrochen: nicht blättern
+              s.drag = null;
+              s.flip.release(0, 0);
+            } else {
+              onTouchEnd();
+            }
+          });
           s.panel.addEventListener("wheel", onWheel, { passive: false });
           // Griff: ganz hochschieben bzw. zurück zur großen Galerie
           el.querySelector("[data-sheet-handle]").addEventListener("click", function () {
             var b = sheetBounds(pswp, s);
             animateTo(s.top > (b.minTop + b.peekTop) / 2 ? b.minTop : b.peekTop);
           });
+          if (row) s.flip = addFlip(pswp, s, row, carry);
           if (el.isConnected) relayout();
           tick();
+          watchFits(el);
         }
       });
     });
@@ -634,15 +763,167 @@
       window.cancelAnimationFrame(s.anim);
       wideGallery.removeEventListener("change", relayout);
       window.removeEventListener("resize", relayout);
+      if (fitObserver && s.panel) {
+        s.panel.querySelectorAll("[data-fit]").forEach(function (line) {
+          fitObserver.unobserve(line);
+          fitObserver.unobserve(line.parentElement);
+        });
+      }
     });
+    return s;
   }
 
   function platformName(link) {
     return link.getAttribute("data-platform") || "eBay";
   }
 
-  // Vorschaubild und Titel einer Zeile öffnen dieselbe Galerie (includes/offer.html)
-  function openGallery(link) {
+  // ------------------------------------------------------------------
+  // Blättern zwischen Angeboten (Issue #10): In der Schublade bzw. Seitenleiste nach links wischen zeigt das
+  // nächste, nach rechts das vorige Angebot der Liste, aus der die Galerie kam, in deren Reihenfolge
+  // (Sortierung, über alle Seiten). Am Rechner auch mit den Pfeilen oben in der Leiste oder seitlich mit dem
+  // Trackpad. Das neue Angebot kommt als eigene Galerie über die alte, die danach verschwindet; die
+  // Schublade bleibt so weit offen, wie sie war. Nach dem Schließen steht die Liste beim zuletzt gezeigten.
+
+  var FLIP_AT = 0.22;       // so weit (Anteil der Breite) muss man wischen, außer mit Schwung
+  var FLIP_SPEED = 0.35;    // Schwung in Pixel je Millisekunde
+  var FLIP_WHEEL = 60;      // Trackpad: so weit seitlich, dann blättern
+  var flipWheel = { sum: 0, done: false, timer: 0 };   // gilt über die Galerien hinweg (Nachschwung des Trackpads)
+
+  function offerRows(row) {
+    var list = row.parentElement;
+    return list ? Array.prototype.slice.call(list.querySelectorAll(":scope > li[data-offer]")) : [];
+  }
+
+  // Zeile in der Liste zeigen: wenn nötig auf ihre Seite wechseln, dann hinscrollen (beim Schließen der
+  // Galerie, während sie ausblendet). Den Fokus bekommt die Zeile erst, wenn die Galerie weg ist.
+  function revealRow(pswp, row) {
+    var list = row.parentElement;
+    if (!list || !row.isConnected) return;
+    if (row.hidden) paginate(list, Math.floor(offerRows(row).indexOf(row) / pageSize) + 1);
+    var box = row.getBoundingClientRect();
+    if (box.top < 0 || box.bottom > window.innerHeight) row.scrollIntoView({ block: "center" });
+    pswp.on("destroy", function () {
+      var link = row.querySelector("a[data-gallery]");
+      if (link) link.focus({ preventScroll: true });
+    });
+  }
+
+  function addFlip(pswp, s, row, carry) {
+    var rows = offerRows(row);
+    var index = rows.indexOf(row);
+    var nav = s.panel.querySelector("[data-offer-nav]");
+    if (!nav || index < 0 || rows.length < 2) return null;
+    var pos = nav.querySelector("[data-offer-pos]");
+    var busy = false;
+    var closed = false;
+    var warm = {};
+
+    function target(step) {
+      var next = rows[index + step];
+      return next && next.isConnected ? next.querySelector("a[data-gallery]") : null;
+    }
+
+    function label(i) {
+      pos.textContent = "Angebot " + (i + 1) + " von " + rows.length;
+    }
+
+    function width() {
+      return s.panel.clientWidth || 1;
+    }
+
+    function slide(frames, options) {
+      return s.body.animate ? s.body.animate(frames, options) : null;
+    }
+
+    // Inhalt folgt dem Finger; am Anfang oder Ende der Liste nur ein Stück, mit Widerstand
+    function follow(dx) {
+      if (busy) return;
+      var step = dx < 0 ? 1 : -1;
+      if (!target(step)) {
+        dx = dx / 4;
+      } else if (!warm[step]) {
+        warm[step] = true;
+        warmGallery(target(step));   // lädt schon, während man wischt
+      }
+      s.body.style.transform = dx ? "translateX(" + dx + "px)" : "";
+      s.body.style.opacity = dx ? String(1 - Math.min(0.5, Math.abs(dx) / width())) : "";
+    }
+
+    function settle() {   // zurück an den Platz
+      var from = s.body.style.transform;
+      var opacity = s.body.style.opacity || "1";
+      s.body.style.transform = "";
+      s.body.style.opacity = "";
+      if (from) slide([{ transform: from, opacity: opacity }, { transform: "translateX(0)", opacity: 1 }], { duration: 180, easing: "ease-out" });
+    }
+
+    function go(step) {
+      var link = target(step);
+      if (busy || closed || !link) return;
+      busy = true;
+      label(index + step);
+      var out = slide([{ transform: s.body.style.transform || "translateX(0)", opacity: s.body.style.opacity || "1" },
+                       { transform: "translateX(" + (-step * width()) + "px)", opacity: 0 }],
+                      { duration: 160, easing: "ease-in", fill: "forwards" });
+      var state = s.sheetState();
+      openGallery(link, {
+        old: pswp,
+        step: step,
+        sheet: state.sheet,
+        top: state.top,
+        cancelled: function () { return closed; },
+        fail: function () {
+          busy = false;
+          label(index);
+          if (out) out.cancel();
+          settle();
+        }
+      });
+    }
+
+    function release(dx, speed) {
+      if (busy) return;
+      var step = dx < 0 ? 1 : -1;
+      var far = Math.abs(dx) > width() * FLIP_AT || (Math.abs(dx) > 24 && speed * dx > 0 && Math.abs(speed) > FLIP_SPEED);
+      if (far && target(step)) go(step);
+      else settle();
+    }
+
+    function wheel(deltaX) {
+      window.clearTimeout(flipWheel.timer);
+      flipWheel.timer = window.setTimeout(function () {
+        flipWheel.sum = 0;
+        flipWheel.done = false;
+      }, 250);
+      if (flipWheel.done) return;
+      flipWheel.sum += deltaX;
+      if (Math.abs(flipWheel.sum) < FLIP_WHEEL) return;
+      flipWheel.done = true;   // eine Geste, ein Angebot
+      go(flipWheel.sum > 0 ? 1 : -1);
+    }
+
+    nav.hidden = false;
+    label(index);
+    nav.querySelectorAll("[data-offer-step]").forEach(function (button) {
+      var step = Number(button.dataset.offerStep);
+      button.disabled = !target(step);
+      button.addEventListener("click", function () { go(step); });
+    });
+    pswp.on("close", function () { closed = true; });
+    if (carry) {
+      // hereinschieben, von der Seite, zu der man gewischt hat; das nächste in der Richtung schon laden
+      slide([{ transform: "translateX(" + (carry.step * width() * 0.3) + "px)", opacity: 0 },
+             { transform: "translateX(0)", opacity: 1 }], { duration: 200, easing: "ease-out" });
+      warm[carry.step] = true;
+      warmGallery(target(carry.step));
+    }
+    return { follow: follow, release: release, wheel: wheel };
+  }
+
+  // Vorschaubild und Titel einer Zeile öffnen dieselbe Galerie (includes/offer.html). carry: beim Blättern
+  // (addFlip) die bisherige Galerie und wie weit die Schublade offen war; die neue erscheint dann ohne
+  // Einblenden darüber, und klappt es nicht, bleibt man beim bisherigen Angebot.
+  function openGallery(link, carry) {
     var row = link.closest("li[data-offer]");
     var links = row ? Array.prototype.slice.call(row.querySelectorAll("a[data-gallery]")) : [link];
     var thumb = row ? row.querySelector("a[data-gallery] img") : link.querySelector("img");
@@ -652,14 +933,20 @@
       .then(function (results) {
         var PhotoSwipe = results[0];
         var items = results[1].items || [];
+        if (carry && carry.cancelled()) return;   // inzwischen geschlossen
         if (!items.length && !results[1].panel) throw new Error("keine Bilder");
         if (!items.length) {   // keine Bilder, aber Beschreibung: Galerie trotzdem öffnen
           items = [{ html: '<p class="grid h-full place-items-center px-6 text-center text-ui text-white/70">Zu diesem Angebot liefert ' + platformName(link) + ' gerade keine Bilder.</p>' }];
         } else if (thumb) {
           items[0].msrc = thumb.currentSrc || thumb.src;   // Vorschaubild, bis das große Bild da ist
         }
-        var pswp = new PhotoSwipe(Object.assign({ dataSource: items }, GALLERY_OPTIONS));
-        if (results[1].panel) addPanel(pswp, results[1].panel);
+        var options = Object.assign({ dataSource: items }, GALLERY_OPTIONS);
+        if (carry) {
+          options.showAnimationType = "none";
+          options.returnFocus = false;   // macht revealRow
+        }
+        var pswp = new PhotoSwipe(options);
+        if (results[1].panel) addPanel(pswp, results[1].panel, carry, row);
         pswp.on("uiRegister", function () {
           if (hideForm) {
             // Ausblenden: Galerie schließen, Zeile entfernen, unten „Rückgängig“ anbieten
@@ -691,9 +978,29 @@
             }
           });
         });
+        if (carry) {
+          // Die alte Galerie gibt Tastatur und Fokus ab und verschwindet, sobald die neue steht
+          var old = carry.old;
+          var dropped = false;
+          var drop = function () {
+            if (dropped) return;
+            dropped = true;
+            old.destroy();
+          };
+          old.options.returnFocus = false;
+          old.events.removeAll();
+          pswp.on("openingAnimationEnd", drop);
+          window.setTimeout(drop, 500);
+          if (row) pswp.on("close", function () { revealRow(pswp, row); });
+        }
         pswp.init();
       })
       .catch(function (error) {
+        if (carry) {   // beim Blättern: beim bisherigen Angebot bleiben
+          console.info("Heuhaufen: Angebot nicht geladen (" + error.message + ")");
+          carry.fail();
+          return;
+        }
         // Ohne Galerie wenigstens das Angebot bei der Plattform zeigen, wie ohne JavaScript
         console.info("Heuhaufen: Galerie nicht verfügbar (" + error.message + ")");
         var tab = window.open(link.href, "_blank");

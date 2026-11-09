@@ -55,7 +55,7 @@
         </span>
         {% endif %}
         {% endif %}
-        {% if v.auction and v.end_time %}<span class="text-meta text-muted">{{ ui.countdown_span(v.end_time, now, v.lead_seconds) }}</span>{% endif %}
+        {% if v.auction and v.end_time %}<span class="text-meta text-muted" data-fit>{{ ui.countdown_span(v.end_time, now, v.lead_seconds) }}</span>{% endif %}
         {% if v.auction and v.remind and not v.reminded %}<span class="text-meta font-medium text-accent">Erinnerung 1 Min vor Ende</span>{% endif %}
       </span>
     </a>
