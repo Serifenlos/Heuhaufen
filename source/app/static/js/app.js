@@ -779,6 +779,111 @@
   if (formatInputs.length) syncFormat();
 
   // ------------------------------------------------------------------
+  // Ziehen zum Neuladen (Issue #11). In der Web-App vom Home-Bildschirm (iOS: „Als Web-App öffnen“)
+  // gibt es das nicht von selbst, deshalb nur dort: ganz oben nach unten ziehen, ab PULL_AT loslassen.
+  // Dazu: Wer nach AWAY_RELOAD zur App zurückkehrt, bekommt die Seite frisch, außer bei offenen
+  // Eingaben oder offener Galerie. Neu geladen wird data-reload (main.reload_url), nie ein Formular.
+
+  var PULL_AT = 80;                    // Fingerweg in px
+  var AWAY_RELOAD = 5 * 60 * 1000;     // ms
+  var pull = document.querySelector("[data-pull]");
+  var standalone = window.navigator.standalone === true ||
+    (typeof window.matchMedia === "function" && window.matchMedia("(display-mode: standalone)").matches);
+  var formTouched = false;
+
+  function reloadPage() {
+    window.location.replace(document.body.dataset.reload || window.location.pathname);
+  }
+
+  function galleryOpen() {
+    return !!document.querySelector(".pswp--open");
+  }
+
+  function noPull(target) {
+    return galleryOpen() || !!(target.closest && target.closest(".pswp, input, textarea, select"));
+  }
+
+  if (pull && standalone) {
+    var mark = pull.querySelector("[data-pull-mark]");
+    var startX = 0;
+    var startY = 0;
+    var distance = 0;
+    var tracking = false;
+    var busy = false;
+
+    var showPull = function (d) {
+      var p = Math.min(d / PULL_AT, 1);
+      pull.hidden = false;
+      pull.style.opacity = String(p);
+      pull.style.transform = "translateY(" + Math.round(Math.min(d * 0.5, PULL_AT * 0.6)) + "px)";
+      mark.style.transform = "rotate(" + Math.round(p * 300) + "deg)";
+    };
+
+    var hidePull = function () {
+      pull.removeAttribute("data-dragging");
+      pull.style.opacity = "0";
+      pull.style.transform = "";
+      window.setTimeout(function () { if (!busy && !tracking) pull.hidden = true; }, 250);
+    };
+
+    document.addEventListener("touchstart", function (e) {
+      tracking = !busy && e.touches.length === 1 && window.scrollY <= 0 && !noPull(e.target);
+      if (!tracking) return;
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      distance = 0;
+    }, { passive: true });
+
+    document.addEventListener("touchmove", function (e) {
+      if (!tracking) return;
+      var dx = e.touches[0].clientX - startX;
+      var dy = e.touches[0].clientY - startY;
+      // nach oben gescrollt oder seitlich gewischt: kein Neuladen
+      if (window.scrollY > 0 || dy < -8 || (distance < 12 && Math.abs(dx) > 12 && Math.abs(dx) > dy)) {
+        tracking = false;
+        if (distance > 0) hidePull();
+        return;
+      }
+      distance = Math.max(0, dy);
+      pull.setAttribute("data-dragging", "");
+      showPull(distance);
+    }, { passive: true });
+
+    var endPull = function () {
+      if (!tracking) return;
+      tracking = false;
+      if (distance >= PULL_AT) {
+        busy = true;
+        pull.removeAttribute("data-dragging");
+        pull.setAttribute("data-loading", "");
+        mark.style.transform = "";
+        reloadPage();
+      } else if (distance > 0) {
+        hidePull();
+      }
+    };
+    document.addEventListener("touchend", endPull);
+    document.addEventListener("touchcancel", function () {
+      distance = 0;
+      endPull();
+    });
+  }
+
+  if (standalone) {
+    var hiddenAt = 0;
+    document.addEventListener("input", function (e) {
+      if (e.target.closest && e.target.closest("form")) formTouched = true;
+    });
+    document.addEventListener("visibilitychange", function () {
+      if (document.visibilityState === "hidden") {
+        hiddenAt = Date.now();
+      } else if (hiddenAt && Date.now() - hiddenAt >= AWAY_RELOAD && !formTouched && !galleryOpen()) {
+        reloadPage();
+      }
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Nutzer: Text der Einladung kopieren (Knopf erscheint nur mit JavaScript)
 
   function copyText(field) {

@@ -13,7 +13,11 @@
 <link rel="stylesheet" href="{{ asset('css/app-min.css') }}">
 <script src="{{ asset('js/app-min.js') }}" defer></script>
 </head>
-<body{% if signed_in %} data-photoswipe="{{ asset('js/photoswipe-min.js') }}"{% endif %}>
+<body data-reload="{{ reload_url }}"{% if signed_in %} data-photoswipe="{{ asset('js/photoswipe-min.js') }}"{% endif %}>
+{# Ziehen zum Neuladen in der Web-App vom Home-Bildschirm (app.js): erscheint oben beim Herunterziehen #}
+<div class="group/pull pointer-events-none fixed top-[calc(env(safe-area-inset-top)+10px)] left-1/2 z-40 grid size-10 -translate-x-1/2 place-items-center rounded-full border border-line bg-surface opacity-0 shadow-sm transition-[opacity,transform] duration-200 data-dragging:transition-none" data-pull hidden aria-hidden="true">
+  <span class="grid group-data-loading/pull:animate-spin" data-pull-mark>{{ ui.mark(22) }}</span>
+</div>
 {% if signed_in %}
 <header class="mx-auto flex max-w-280 items-center justify-between gap-4 px-gutter py-3.5 xs:py-4.5">
   <a class="inline-flex items-center gap-2.5 text-title font-semibold tracking-[-0.01em] text-ink no-underline" href="/" aria-label="Zur Übersicht">

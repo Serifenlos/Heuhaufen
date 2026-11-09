@@ -10,7 +10,7 @@ import secrets
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -162,12 +162,28 @@ def safe_next(value: object) -> str:
     return "/"
 
 
+# Seiten, die nach dem Absenden eines Formulars direkt erscheinen (Fehler, Einladungs-Link): beim Neuladen
+# per Herunterziehen (app.js) stattdessen diese Seite holen, statt das Formular noch einmal zu senden
+RELOAD_AFTER_POST = (("/settings/", "/settings"), ("/nutzer/", "/nutzer"))
+
+
+def reload_url(request: Request) -> str:
+    """Adresse für „Ziehen zum Neuladen“: dieselbe Seite ohne Hinweis (?ok=/?err=), nach einem Formular die
+    Seite, zu der es gehört."""
+    path = request.url.path
+    if request.method != "GET":
+        return next((target for prefix, target in RELOAD_AFTER_POST if path.startswith(prefix)), path)
+    query = urlencode([(k, v) for k, v in request.query_params.multi_items() if k not in ("ok", "err")])
+    return path + (f"?{query}" if query else "")
+
+
 def render(request: Request, name: str, status_code: int = 200, **ctx) -> HTMLResponse:
     sess = getattr(request.state, "session", None)
     ctx.setdefault("csrf", sess["csrf"] if sess else "")
     ctx.setdefault("flash_ok", MESSAGES.get(request.query_params.get("ok", "")))
     ctx.setdefault("flash_err", MESSAGES.get(request.query_params.get("err", "")))
     ctx.setdefault("active", "")
+    ctx["reload_url"] = reload_url(request)
     ctx["signed_in"] = sess is not None
     user = getattr(request.state, "user", None)
     ctx["is_admin"] = bool(user and user["role"] == "admin")
