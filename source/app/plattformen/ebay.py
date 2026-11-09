@@ -24,7 +24,7 @@ from datetime import datetime
 import httpx
 
 from .. import config, db, geheim
-from .basis import Credential, Found, Plattform, PlatformError, Results, search_categories
+from .basis import Credential, Found, Plattform, PlatformError, Results, search_aspects, search_categories
 
 log = logging.getLogger("heuhaufen.ebay")
 
@@ -151,6 +151,17 @@ class EbayClient:
                 break
             items.total = max(total, len(items))   # es gäbe weitere Seiten
         return items
+
+    async def aspect_distributions(self, q: str | None, category: str, plz: str = "") -> list[dict]:
+        """Artikelmerkmale der Treffer in einer Kategorie mit Anzahl je Wert (fieldgroups=ASPECT_REFINEMENTS).
+        Eine Abfrage, gezählt als „merkmale“."""
+        params = {"category_ids": category, "fieldgroups": "ASPECT_REFINEMENTS", "limit": "1"}
+        if q:
+            params["q"] = q
+        r = await self._get("/buy/browse/v1/item_summary/search", params, plz, purpose="merkmale")
+        if r.status_code != 200:
+            raise EbayError(_error_text(r))
+        return ((r.json().get("refinement") or {}).get("aspectDistributions")) or []
 
     async def get_item(self, item_id: str, plz: str = "", purpose: str = "suche") -> dict | None:
         r = await self._get("/buy/browse/v1/item/" + urllib.parse.quote(item_id, safe=""), plz=plz, purpose=purpose)
@@ -333,6 +344,24 @@ def parse_detail(d: dict) -> dict:
     }
 
 
+def aspect_filter(category: str | None, aspects: list[dict]) -> str | None:
+    """Filter für Artikelmerkmale, z. B. „categoryId:57988,Größe:{M|L},Farbe:{Schwarz}“. eBay nimmt ihn nur
+    zusammen mit einer Kategorie an (dieselbe Nummer auch in category_ids). | im Wert schützt ein \\,
+    geschweifte Klammern fallen weg."""
+    if not category or not aspects:
+        return None
+
+    def esc(text: str) -> str:
+        return text.replace("\\", "\\\\").replace("|", "\\|").replace("{", "").replace("}", "").strip()
+
+    parts = [f"categoryId:{category}"]
+    for a in aspects:
+        values = [esc(v) for v in a["values"] if esc(v)]
+        if esc(a["name"]) and values:
+            parts.append(f"{esc(a['name'])}:{{{'|'.join(values)}}}")
+    return ",".join(parts) if len(parts) > 1 else None
+
+
 def flatten_tree(tree: dict) -> list[dict]:
     """getCategoryTree → Liste mit CATEGORY_FIELDS, Eltern vor Kindern. Die Wurzel selbst (laut eBay
     ohne verlässliche Nummer und Namen) fällt weg; ihre Kinder sind die oberste Ebene."""
@@ -434,6 +463,17 @@ class EbayPlattform(Plattform):
 
     # ------------------------------------------------------------ Suchen
 
+    @staticmethod
+    def _category_params(s: dict, category: str | None) -> dict | None:
+        """Zusätzliche Parameter für die Suche in einer Kategorie, mit den Artikelmerkmalen des Gesuchs."""
+        if not category:
+            return None
+        params = {"category_ids": category}
+        af = aspect_filter(category, search_aspects(s))
+        if af:
+            params["aspect_filter"] = af
+        return params
+
     async def _search_shipped(self, client: EbayClient, s: dict, formats: list[str], plz: str,
                               now: float, category: str | None = None) -> list[dict]:
         """Angebote mit Versand nach Deutschland (Strategie siehe oben)."""
@@ -447,7 +487,7 @@ class EbayPlattform(Plattform):
                 f.append("maxDeliveryCost:0")
             return f
 
-        extra = {"category_ids": category} if category else None
+        extra = self._category_params(s, category)
         split = (s["id"], category)
         found: list[dict] = []
         if len(formats) > 1 and now >= self._split_until.get(split, 0):
@@ -487,7 +527,7 @@ class EbayPlattform(Plattform):
                 "pickupRadiusUnit:km",
             ]
             for category in categories:
-                extra = {"category_ids": category} if category else None
+                extra = self._category_params(s, category)
                 for summary in await client.search(s["query"], filters, None, plz, extra=extra):
                     if summary.get("itemId"):   # auch Angebote mit Versand: so kennt Heuhaufen die Entfernung
                         found[summary["itemId"]] = (summary, True)
@@ -539,6 +579,19 @@ class EbayPlattform(Plattform):
         tree_id = self._tree_id or (await self._tree(client))[0]
         return [str((x.get("category") or {}).get("categoryId")) for x in await client.category_suggestions(tree_id, query)
                 if (x.get("category") or {}).get("categoryId")]
+
+    async def aspect_suggestions(self, settings: dict, query: str, category: str) -> list[tuple[str, list[tuple[str, int]]]]:
+        dists = await self._client(settings).aspect_distributions(query or None, category, self._plz(settings))
+        out = []
+        for d in dists:
+            name = (d.get("localizedAspectName") or "").strip()
+            values = [((v.get("localizedAspectValue") or "").strip(), int(v.get("matchCount") or 0))
+                      for v in d.get("aspectValueDistributions") or []]
+            values = sorted([v for v in values if v[0]], key=lambda v: -v[1])
+            if name and values:
+                out.append((name, values))
+        out.sort(key=lambda a: -sum(n for _, n in a[1]))
+        return out
 
     # ------------------------------------------------------------ Bilder, Verbindung
 

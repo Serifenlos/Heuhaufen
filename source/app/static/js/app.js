@@ -1058,6 +1058,98 @@
   }
 
   // ------------------------------------------------------------------
+  // Artikelmerkmale im Gesuch-Formular (Issue #12): Paare aus Merkmal und Wert. Ist das letzte Paar
+  // ausgefüllt, kommt ein leeres dazu. Vorschläge (datalist) aus den gewählten Kategorien über /merkmale/…,
+  // geladen beim ersten Klick in ein Feld. Ohne Kategorie ein Hinweis: eBay filtert nur in Kategorien.
+
+  var aspBox = document.querySelector("[data-aspects]");
+
+  if (aspBox) {
+    var aspRows = aspBox.querySelector("[data-aspect-rows]");
+    var aspTemplate = aspBox.querySelector("[data-aspect-template]");
+    var aspNeeds = aspBox.querySelector("[data-aspect-needs-category]");
+    var aspError = aspBox.querySelector("#aspects-error");
+    var aspNames = document.getElementById("aspect-names");
+    var aspValues = document.getElementById("aspect-values");
+    var aspChosen = document.querySelector("[data-cat-chosen]");
+    var aspData = { names: [], values: {} };
+    var aspLoaded = null;
+
+    var aspInputs = function (row) {
+      return row.querySelectorAll("input");
+    };
+
+    var aspCategories = function () {
+      if (!aspChosen) return [];
+      return Array.prototype.map.call(aspChosen.querySelectorAll("input[name=category]"), function (i) { return i.value; });
+    };
+
+    var aspCheck = function () {
+      var rows = aspRows.querySelectorAll("[data-aspect-row]");
+      var last = rows[rows.length - 1];
+      if (!last || (aspInputs(last)[0].value.trim() && aspInputs(last)[1].value.trim())) {
+        aspRows.appendChild(aspTemplate.content.firstElementChild.cloneNode(true));
+      }
+      var any = Array.prototype.some.call(aspRows.querySelectorAll("input"), function (i) { return i.value.trim(); });
+      aspNeeds.hidden = !any || aspCategories().length > 0 || !!(aspError && !aspError.hidden);
+      if (aspError && aspCategories().length) aspError.hidden = true;   // Kategorie nachgetragen
+    };
+
+    var aspOptions = function (list, items) {
+      list.textContent = "";
+      (items || []).forEach(function (text) {
+        var option = document.createElement("option");
+        option.value = text;
+        list.appendChild(option);
+      });
+    };
+
+    var aspLoad = function () {
+      var cats = aspCategories();
+      var query = document.getElementById("query");
+      var q = query ? query.value.trim() : "";
+      var key = cats.join(",") + "|" + q;
+      if (!cats.length || key === aspLoaded) return;
+      aspLoaded = key;
+      var params = "q=" + encodeURIComponent(q) + cats.map(function (c) { return "&c=" + encodeURIComponent(c); }).join("");
+      fetch("/merkmale/" + encodeURIComponent(aspBox.dataset.platform) + "?" + params, { credentials: "same-origin" })
+        .then(function (response) { return response.ok ? response.json() : { names: [], values: {} }; })
+        .then(function (data) {
+          aspData = data;
+          aspOptions(aspNames, data.names);
+        })
+        .catch(function (error) {
+          console.info("Merkmale:", error);
+          aspLoaded = null;
+        });
+    };
+
+    aspRows.addEventListener("input", aspCheck);
+    aspRows.addEventListener("focusin", function (e) {
+      aspLoad();
+      if (e.target.name !== "aspect_value") return;
+      var name = e.target.closest("[data-aspect-row]").querySelector("[name=aspect_name]").value.trim().toLowerCase();
+      var match = Object.keys(aspData.values || {}).filter(function (k) { return k.toLowerCase() === name; })[0];
+      aspOptions(aspValues, match ? aspData.values[match] : []);
+    });
+    aspRows.addEventListener("click", function (e) {
+      var remove = e.target.closest("[data-aspect-remove]");
+      if (!remove) return;
+      var row = remove.closest("[data-aspect-row]");
+      if (aspRows.querySelectorAll("[data-aspect-row]").length > 1) {
+        row.remove();
+      } else {
+        aspInputs(row).forEach(function (i) { i.value = ""; });
+      }
+      aspCheck();
+    });
+    if (aspChosen && typeof window.MutationObserver === "function") {
+      new window.MutationObserver(aspCheck).observe(aspChosen, { childList: true });
+    }
+    aspCheck();
+  }
+
+  // ------------------------------------------------------------------
   // Nutzer: Text der Einladung kopieren (Knopf erscheint nur mit JavaScript)
 
   function copyText(field) {

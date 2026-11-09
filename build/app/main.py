@@ -510,7 +510,7 @@ def _form_defaults(settings: dict) -> dict:
         "name": "", "query": "", "exclude": "", "format": "auction", "location": "DE",
         "max_price_raw": "", "incl_shipping": 1, "free_shipping_only": 0, "condition": "any",
         "lead_raw": str(db.setting_int(settings, "lead_minutes", 10)), "interval_raw": "",
-        "pickup_mode": "radius", "active": 1, "categories": "",
+        "pickup_mode": "radius", "active": 1, "categories": "", "aspects": "", "aspect_rows": [],
     }
 
 
@@ -518,7 +518,7 @@ def _values_from_search(s: dict) -> dict:
     price = s["max_price"]
     raw = f"{price:.0f}" if float(price).is_integer() else f"{price:.2f}".replace(".", ",")
     return {**s, "max_price_raw": raw, "lead_raw": str(s["lead_minutes"]),
-            "interval_raw": str(s["interval_minutes"] or "")}
+            "interval_raw": str(s["interval_minutes"] or ""), "aspect_rows": kategorien.aspect_rows(s.get("aspects") or "")}
 
 
 def _parse_search_form(form) -> tuple[dict, dict]:
@@ -542,9 +542,15 @@ def _parse_search_form(form) -> tuple[dict, dict]:
         "interval_raw": str(form.get("interval_minutes", "")).strip()[:5],
         "categories": kategorien.normalize(form.getlist("category")[:50]),
     }
+    v["aspects"], v["aspect_rows"], aspect_error = kategorien.parse_aspects(form.getlist("aspect_name")[:30],
+                                                                            form.getlist("aspect_value")[:30])
     errors = {}
     if len(v["query"]) < 2:
         errors["query"] = "Gib mindestens zwei Zeichen ein."
+    if aspect_error:
+        errors["aspects"] = aspect_error
+    elif v["aspects"] and not v["categories"]:
+        errors["aspects"] = "Wähle dazu eine Kategorie: eBay filtert Artikelmerkmale nur innerhalb einer Kategorie."
     v["max_price"] = util.parse_price(v["max_price_raw"])
     if v["max_price"] is None:
         errors["max_price"] = "Gib einen Betrag über 0 € ein, zum Beispiel 250 oder 249,90."
@@ -566,7 +572,7 @@ def _parse_search_form(form) -> tuple[dict, dict]:
 
 SEARCH_COLUMNS = ["name", "query", "exclude", "format", "location", "max_price", "incl_shipping",
                   "free_shipping_only", "condition", "lead_minutes", "interval_minutes", "pickup_mode", "active",
-                  "categories"]
+                  "categories", "aspects"]
 
 
 def _render_form(request: Request, values: dict, errors: dict, mode: str, sid: int | None = None,
@@ -618,7 +624,8 @@ async def search_detail(request: Request, sid: int):
     show = request.query_params.get("show")
     hidden = _hidden_views(s, now) if show == "hidden" else []
     return render(request, "search_detail.html", active="searches", s=overview, now=now,
-                  show=show, hidden=hidden, category_names=kategorien.names(s.get("categories")))
+                  show=show, hidden=hidden, category_names=kategorien.names(s.get("categories")),
+                  aspect_text=kategorien.aspect_text(s.get("aspects") or ""))
 
 
 def _hidden_views(s: dict, now: float) -> list[dict]:
@@ -774,6 +781,18 @@ async def category_suggestions(request: Request, key: str):
     text = request.query_params.get("q", "")[:100]
     rows = await kategorien.suggestions(p, user_settings(request), text)
     return _category_list(request, p, rows, mode="suggest", text=text)
+
+
+@app.get("/merkmale/{key}")
+async def aspect_suggestions(request: Request, key: str):
+    """Vorschläge für Artikelmerkmale (Issue #12): Merkmale und Werte in den gewählten Kategorien (?c=…),
+    passend zum Suchbegriff (?q=…). Abfrage bei der Plattform, einen Tag gemerkt (kategorien.py)."""
+    p = plattformen.ALL.get(key)
+    if not p or not p.categories:
+        return JSONResponse({"names": [], "values": {}}, 404)
+    data = await kategorien.aspect_suggestions(p, user_settings(request), request.query_params.get("q", ""),
+                                               request.query_params.getlist("c")[:10])
+    return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
 
 # ---------------------------------------------------------------- Einstellungen

@@ -43,6 +43,34 @@
     {% if chosen|rejectattr('known')|list %}<p class="{{ ui.hint('warn') }}">Gelb markierte Kategorien kennt Heuhaufen (noch) nicht. Gibt es sie bei {{ category_platform.name }} nicht mehr, entferne sie, sonst schlägt die Suche fehl.</p>{% endif %}
     <p class="{{ ui.hint() }}">Ohne Auswahl sucht Heuhaufen überall. Eine Kategorie schließt ihre Unterkategorien ein. Jede Kategorie ist bei {{ category_platform.name }} eine eigene Suche: Mit drei Kategorien braucht ein Suchlauf dreimal so viele Abfragen.</p>
   </div>
+
+  {# Artikelmerkmale (Issue #12): freie Paare aus Merkmal und Wert. Ist das letzte Paar ausgefüllt, kommt ein
+     neues dazu (app.js „Artikelmerkmale“). Vorschläge aus den gewählten Kategorien über /merkmale/… #}
+  {% set aspect_input = ui.input() ~ " min-w-0" %}
+  <div class="grid min-w-0 gap-2" data-aspects data-platform="{{ category_platform.key }}">
+    <span class="{{ ui.label() }}" id="aspects-label">Nur mit diesen Artikelmerkmalen <span class="font-normal text-muted">optional</span></span>
+    <div class="grid gap-2" data-aspect-rows aria-labelledby="aspects-label">
+      {% for name, value in values.aspect_rows + [('', '')] %}
+      <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2" data-aspect-row>
+        <input class="{{ aspect_input }}" name="aspect_name" value="{{ name }}" placeholder="Merkmal" aria-label="Merkmal" autocomplete="off" list="aspect-names" {% if errors.aspects and (not name) != (not value) %}aria-invalid="true"{% endif %}>
+        <input class="{{ aspect_input }}" name="aspect_value" value="{{ value }}" placeholder="Wert" aria-label="Wert" autocomplete="off" list="aspect-values" {% if errors.aspects and (not name) != (not value) %}aria-invalid="true"{% endif %}>
+        <button type="button" class="{{ ui.icon_button() }} text-xl leading-none" data-aspect-remove aria-label="Merkmal entfernen">×</button>
+      </div>
+      {% endfor %}
+    </div>
+    <template data-aspect-template>
+      <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2" data-aspect-row>
+        <input class="{{ aspect_input }}" name="aspect_name" value="" placeholder="Merkmal" aria-label="Merkmal" autocomplete="off" list="aspect-names">
+        <input class="{{ aspect_input }}" name="aspect_value" value="" placeholder="Wert" aria-label="Wert" autocomplete="off" list="aspect-values">
+        <button type="button" class="{{ ui.icon_button() }} text-xl leading-none" data-aspect-remove aria-label="Merkmal entfernen">×</button>
+      </div>
+    </template>
+    <datalist id="aspect-names"></datalist>
+    <datalist id="aspect-values"></datalist>
+    {% if errors.aspects %}<p class="{{ ui.hint('warn') }} font-medium text-over" id="aspects-error" role="alert">{{ errors.aspects }}</p>{% endif %}
+    <p class="{{ ui.hint('warn') }}" data-aspect-needs-category {% if chosen or not values.aspect_rows or errors.aspects %}hidden{% endif %}>Artikelmerkmale gehen nur zusammen mit einer Kategorie, so verlangt es {{ category_platform.name }}.</p>
+    <p class="{{ ui.hint() }}">So, wie es bei {{ category_platform.name }} unter „Artikelmerkmale“ steht, zum Beispiel Größe und M. Gleiches Merkmal mehrmals: einer der Werte reicht (Größe M oder L). Verschiedene Merkmale müssen alle passen. Mit gewählter Kategorie schlägt das Feld passende Merkmale und Werte vor.</p>
+  </div>
   {% endif %}
 
   <div class="grid min-w-0 gap-2">

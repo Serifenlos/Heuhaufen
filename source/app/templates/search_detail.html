@@ -7,7 +7,7 @@
 <section class="mt-2 mb-2 flex flex-wrap items-start justify-between gap-x-8 gap-y-5">
   <div>
     <h1>{{ s.title }}</h1>
-    <p class="mt-1.5 max-w-[62ch] text-muted">{{ s.description }}. {{ s.limit }}.{% if category_names %} Nur in {{ category_names|join(', ') }}.{% endif %}{% if s.exclude %} Ohne „{{ s.exclude }}“.{% endif %}</p>
+    <p class="mt-1.5 max-w-[62ch] text-muted">{{ s.description }}. {{ s.limit }}.{% if category_names %} Nur in {{ category_names|join(', ') }}.{% endif %}{% if aspect_text %} Merkmale: {{ aspect_text }}.{% endif %}{% if s.exclude %} Ohne „{{ s.exclude }}“.{% endif %}</p>
     <p class="mt-3 flex items-center gap-2 text-sm text-ink-2">
       <span class="size-1.75 rounded-full {{ 'bg-accent' if s.active else 'bg-muted opacity-60' }}" aria-hidden="true"></span>
       {% if s.active %}Aktiv, zuletzt gesucht {{ ago(s.last_run, now) }}{% else %}Pausiert{% endif %}

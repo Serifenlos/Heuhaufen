@@ -17,12 +17,13 @@ Zugangsdaten gehören zur Plattform (credentials) und stehen in den Einstellunge
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 # Wofür eine Abfrage war (Einstellungen zeigen die Abfragen danach aufgeschlüsselt). Gilt für alle Plattformen.
 PURPOSES = {"suche": "Suche nach neuen Angeboten", "endspurt": "Endspurt vor Auktionsende",
             "erinnerung": "Erinnerung 1 Min vor Ende", "durchschnitt": "Durchschnittspreis",
-            "galerie": "Galerie (Beschreibung und Gebote)"}
+            "galerie": "Galerie (Beschreibung und Gebote)", "merkmale": "Vorschläge für Artikelmerkmale"}
 
 LISTING_FIELDS = (
     "item_id", "platform", "title", "url", "image", "images", "condition_text", "is_auction", "has_bin",
@@ -46,6 +47,17 @@ def search_categories(s: dict, platform: str) -> list[str]:
         if name == platform and cid and cid not in out:
             out.append(cid)
     return out
+
+
+def search_aspects(s: dict) -> list[dict]:
+    """Artikelmerkmale eines Gesuchs: searches.aspects (JSON) → [{"name": "Größe", "values": ["M", "L"]}].
+    Gleiches Merkmal mit mehreren Werten: eines davon reicht. Verschiedene Merkmale: alle müssen passen."""
+    try:
+        data = json.loads(s.get("aspects") or "[]")
+    except ValueError:
+        return []
+    return [{"name": str(a["name"]), "values": [str(v) for v in a["values"] if str(v)]}
+            for a in data if isinstance(a, dict) and a.get("name") and isinstance(a.get("values"), list) and a["values"]]
 
 
 class PlatformError(Exception):
@@ -117,6 +129,11 @@ class Plattform:
 
     async def category_suggestions(self, settings: dict, query: str) -> list[str]:
         """Kategorien, die zu einem Suchbegriff passen (ids, beste zuerst)."""
+        return []
+
+    async def aspect_suggestions(self, settings: dict, query: str, category: str) -> list[tuple[str, list[tuple[str, int]]]]:
+        """Artikelmerkmale in einer Kategorie mit ihren häufigsten Werten:
+        [(Merkmal, [(Wert, Anzahl Angebote), …]), …], häufigste zuerst."""
         return []
 
     async def fetch(self, item_id: str, settings: dict, purpose: str,

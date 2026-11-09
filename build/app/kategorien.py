@@ -13,12 +13,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 
 from . import db
 from .plattformen import liste as plattformen
-from .plattformen.basis import Plattform
+from .plattformen.basis import Plattform, search_aspects
 
 log = logging.getLogger("heuhaufen.kategorien")
 
@@ -27,8 +28,11 @@ SUGGEST_FOR = 86400              # Vorschläge zu einem Suchbegriff so lange mer
 MAX_PER_SEARCH = 10              # Kategorien je Gesuch (jede kostet pro Suchlauf eine eigene Abfrage)
 SEP = " › "
 
+ASPECT_CATEGORIES = 3            # Merkmal-Vorschläge aus höchstens so vielen Kategorien (je eine Abfrage)
+
 _lock = asyncio.Lock()
 _suggested: dict[tuple[str, str], tuple[float, list[str]]] = {}
+_aspects: dict[tuple[str, str, str], tuple[float, list]] = {}
 
 
 # ---------------------------------------------------------------- Laden und aktuell halten
@@ -194,3 +198,78 @@ async def suggestions(p: Plattform, settings: dict, query: str, limit: int = 6) 
         _suggested[key] = (time.time(), ids)
     rows = [get(p.key, cid) for cid in ids]
     return [r for r in rows if r][:limit]
+
+
+# ---------------------------------------------------------------- Artikelmerkmale (Issue #12)
+
+MAX_ASPECTS = 10                 # Merkmal-Wert-Paare je Gesuch
+
+
+def parse_aspects(names: list, values: list) -> tuple[str, list[tuple[str, str]], str | None]:
+    """Formularfelder aspect_name/aspect_value → (JSON für searches.aspects, Zeilen zum erneuten Anzeigen,
+    Fehlertext). Gleiches Merkmal mehrmals: Werte zusammen (eines reicht). Leere Zeilen fallen weg."""
+    rows: list[tuple[str, str]] = []
+    error = None
+    for name, value in zip(names, values):
+        name, value = " ".join(str(name).split())[:60], " ".join(str(value).split())[:60]
+        if not name and not value:
+            continue
+        rows.append((name, value))
+        if not name or not value:
+            error = "Zu jedem Merkmal gehört ein Wert, zum Beispiel Größe und M."
+    if len(rows) > MAX_ASPECTS:
+        error = f"Höchstens {MAX_ASPECTS} Merkmale."
+    merged: dict[str, dict] = {}
+    for name, value in rows[:MAX_ASPECTS]:
+        if name and value:
+            a = merged.setdefault(name.casefold(), {"name": name, "values": []})
+            if value.casefold() not in [v.casefold() for v in a["values"]]:
+                a["values"].append(value)
+    data = list(merged.values())
+    return (json.dumps(data, ensure_ascii=False) if data else ""), rows, error
+
+
+def aspect_rows(aspects_json: str) -> list[tuple[str, str]]:
+    """searches.aspects → Zeilen für das Formular (je Wert eine Zeile)."""
+    return [(a["name"], v) for a in search_aspects({"aspects": aspects_json}) for v in a["values"]]
+
+
+def aspect_text(aspects_json: str) -> str:
+    """Für die Anzeige: „Größe M oder L, Farbe Schwarz“."""
+    return ", ".join(f"{a['name']} {' oder '.join(a['values'])}" for a in search_aspects({"aspects": aspects_json}))
+
+
+async def aspect_suggestions(p: Plattform, settings: dict, query: str, keys) -> dict:
+    """Merkmale und ihre häufigsten Werte in den gewählten Kategorien, für die Vorschlagslisten im Formular:
+    {"names": [...], "values": {Merkmal: [...]}}. Je Kategorie und Suchbegriff eine Abfrage, einen Tag gemerkt."""
+    query = " ".join(query.split())[:100]
+    cats = [cid for platform, cid in parse(keys) if platform == p.key][:ASPECT_CATEGORIES]
+    if not cats or not p.configured(settings):
+        return {"names": [], "values": {}}
+    counts: dict[str, int] = {}
+    spelled: dict[str, str] = {}
+    values: dict[str, dict[str, int]] = {}
+    for cid in cats:
+        key = (p.key, cid, query.casefold())
+        cached = _aspects.get(key)
+        if cached and time.time() - cached[0] < SUGGEST_FOR:
+            found = cached[1]
+        else:
+            try:
+                found = await p.aspect_suggestions(settings, query, cid)
+            except Exception as e:   # Vorschläge sind ein Extra
+                log.info("Merkmal-Vorschläge für Kategorie %s: %s", cid, e)
+                continue
+            if len(_aspects) > 500:
+                _aspects.clear()
+            _aspects[key] = (time.time(), found)
+        for name, vals in found:
+            k = name.casefold()
+            spelled.setdefault(k, name)
+            counts[k] = counts.get(k, 0) + sum(n for _, n in vals)
+            for v, n in vals:
+                values.setdefault(k, {})
+                values[k][v] = values[k].get(v, 0) + n
+    names = sorted(counts, key=lambda k: -counts[k])[:60]
+    return {"names": [spelled[k] for k in names],
+            "values": {spelled[k]: [v for v, _ in sorted(values[k].items(), key=lambda x: -x[1])][:50] for k in names}}

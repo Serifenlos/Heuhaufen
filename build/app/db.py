@@ -85,6 +85,7 @@ CREATE TABLE IF NOT EXISTS searches (
     pickup_mode         TEXT NOT NULL DEFAULT 'radius',    -- radius | all | hide
     platforms           TEXT NOT NULL DEFAULT 'ebay',      -- Plattformen, durch Komma getrennt (plattformen/)
     categories          TEXT NOT NULL DEFAULT '',          -- nur in diesen Kategorien: ebay:58058,ebay:175672
+    aspects             TEXT NOT NULL DEFAULT '',          -- Artikelmerkmale als JSON: [{"name": "Größe", "values": ["M"]}]
     user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,   -- wem das Gesuch gehört
     active              INTEGER NOT NULL DEFAULT 1,
     initialized         INTEGER NOT NULL DEFAULT 0,
@@ -336,6 +337,9 @@ def _migrate() -> None:
     # Kategorien je Gesuch (Issue #13)
     if "categories" not in _columns("searches"):
         ex("ALTER TABLE searches ADD COLUMN categories TEXT NOT NULL DEFAULT ''")
+    # Artikelmerkmale je Gesuch (Issue #12)
+    if "aspects" not in _columns("searches"):
+        ex("ALTER TABLE searches ADD COLUMN aspects TEXT NOT NULL DEFAULT ''")
     # Abfragen je Konto und Plattform: Tabellen mit neuem Schlüssel anlegen. Bisherige Zahlen gelten für eBay
     # (Tabellen vor 0.3 hatten keine Plattform) und für den Admin.
     if "user_id" not in _columns("api_usage"):
