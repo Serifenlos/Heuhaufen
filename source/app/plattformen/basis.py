@@ -33,6 +33,20 @@ LISTING_FIELDS = (
 
 DETAIL_FIELDS = ("description_html", "condition_note", "aspects", "bidders", "min_bid", "reserve_met")
 
+# Eine Kategorie aus dem Baum der Plattform (category_tree): id, parent (None = oberste Ebene), name,
+# level (1 = oberste Ebene), leaf (keine Unterkategorien), position (Reihenfolge unter den Geschwistern)
+CATEGORY_FIELDS = ("id", "parent", "name", "level", "leaf", "position")
+
+
+def search_categories(s: dict, platform: str) -> list[str]:
+    """Kategorien eines Gesuchs auf einer Plattform: searches.categories „ebay:58058,ebay:175672“ → ["58058", …]."""
+    out = []
+    for key in (s.get("categories") or "").split(","):
+        name, _, cid = key.strip().partition(":")
+        if name == platform and cid and cid not in out:
+            out.append(cid)
+    return out
+
 
 class PlatformError(Exception):
     """Fehler einer Plattform mit einem Text, den man so anzeigen kann."""
@@ -74,6 +88,7 @@ class Plattform:
     image_hosts: tuple[str, ...] = ()   # Bilder dürfen nur von diesen Servern geladen werden
     auctions = False    # kennt die Plattform Auktionen (Endspurt, Erinnerung)?
     details = False     # liefert die Einzelabfrage Beschreibung und Merkmale (Galerie)?
+    categories = False  # lässt sich die Suche auf Kategorien beschränken (kategorien.py)?
 
     def configured(self, settings: dict) -> bool:
         raise NotImplementedError
@@ -86,8 +101,23 @@ class Plattform:
         Abholangebote neu suchen."""
 
     async def find(self, s: dict, settings: dict, now: float) -> Found:
-        """Neue Angebote zu einem Gesuch (Suchbegriff, Höchstpreis, Format, Standort, Zustand …)."""
+        """Neue Angebote zu einem Gesuch (Suchbegriff, Höchstpreis, Format, Standort, Zustand …,
+        nur in seinen Kategorien dieser Plattform, falls welche gewählt sind: kategorien.of_search)."""
         raise NotImplementedError
+
+    # ------------------------------------------------------------ Kategorien (nur mit categories = True)
+
+    async def category_version(self, settings: dict) -> str:
+        """Kennung der aktuellen Fassung des Kategorienbaums (ändert sich, wenn die Plattform umbaut)."""
+        raise NotImplementedError
+
+    async def category_tree(self, settings: dict) -> tuple[str, list[dict]]:
+        """Der ganze Kategorienbaum: (Fassung, Kategorien mit CATEGORY_FIELDS, Eltern vor Kindern)."""
+        raise NotImplementedError
+
+    async def category_suggestions(self, settings: dict, query: str) -> list[str]:
+        """Kategorien, die zu einem Suchbegriff passen (ids, beste zuerst)."""
+        return []
 
     async def fetch(self, item_id: str, settings: dict, purpose: str,
                     pickup: bool = False) -> tuple[dict, dict | None] | None:

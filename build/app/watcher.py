@@ -22,7 +22,7 @@ import logging
 import time
 from urllib.parse import quote
 
-from . import db, details, images, market, notify, signed, util
+from . import db, details, images, kategorien, market, notify, signed, util
 from .plattformen import liste as plattformen
 from .plattformen.basis import Plattform, PlatformError
 
@@ -57,6 +57,7 @@ class Watcher:
         self.ntfy_errors: dict = {}                  # Konto → letzter Fehler beim Senden an ntfy
         self._settings: dict = {}                    # Einstellungen je Konto, gilt für einen Takt
         self._market_next = 0.0
+        self._categories_next = 0.0
 
     @staticmethod
     def platform(key: str) -> Plattform:
@@ -148,6 +149,37 @@ class Watcher:
                 await self.discover(s, settings)
                 await self.check_endings()
         await self.update_market()
+        await self.update_categories()
+
+    # ------------------------------------------------------------ Kategorien
+
+    def _category_settings(self, p: Plattform) -> dict | None:
+        """Einstellungen eines Kontos, das die Plattform eingerichtet hat (Admin zuerst), für den Abruf
+        der Kategorien. Die gelten für alle Konten."""
+        for u in db.q("SELECT id FROM users WHERE active = 1 ORDER BY role = 'admin' DESC, id"):
+            settings = self.settings_for(u["id"])
+            if p.configured(settings):
+                return settings
+        return None
+
+    async def update_categories(self) -> None:
+        """Kategorienbäume beim ersten Mal laden, danach wöchentlich auf eine neue Fassung prüfen
+        (kategorien.py). Höchstens stündlich nachsehen, ob das fällig ist."""
+        if time.time() < self._categories_next:
+            return
+        self._categories_next = time.time() + 3600
+        for p in plattformen.ALL.values():
+            if not p.categories or not kategorien.due(p.key):
+                continue
+            settings = self._category_settings(p)
+            if settings is None:
+                continue
+            try:
+                await kategorien.refresh(p, settings)
+            except PlatformError as e:
+                log.warning("Kategorien von %s: %s", p.name, e)
+            except Exception:   # Kategorien sind Beiwerk: nie den Watcher aufhalten
+                log.exception("Kategorien von %s ließen sich nicht laden.", p.name)
 
     # ------------------------------------------------------------ Entdecken
 

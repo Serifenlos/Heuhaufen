@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import auth, config, db, details, images, market, notify, signed, util
+from . import auth, config, db, details, images, kategorien, market, notify, signed, util
 from .plattformen import liste as plattformen
 from .plattformen.basis import PURPOSES, PlatformError
 from .watcher import Watcher
@@ -510,7 +510,7 @@ def _form_defaults(settings: dict) -> dict:
         "name": "", "query": "", "exclude": "", "format": "auction", "location": "DE",
         "max_price_raw": "", "incl_shipping": 1, "free_shipping_only": 0, "condition": "any",
         "lead_raw": str(db.setting_int(settings, "lead_minutes", 10)), "interval_raw": "",
-        "pickup_mode": "radius", "active": 1,
+        "pickup_mode": "radius", "active": 1, "categories": "",
     }
 
 
@@ -540,6 +540,7 @@ def _parse_search_form(form) -> tuple[dict, dict]:
         "max_price_raw": str(form.get("max_price", "")).strip()[:20],
         "lead_raw": str(form.get("lead_minutes", "")).strip()[:5],
         "interval_raw": str(form.get("interval_minutes", "")).strip()[:5],
+        "categories": kategorien.normalize(form.getlist("category")[:50]),
     }
     errors = {}
     if len(v["query"]) < 2:
@@ -564,16 +565,21 @@ def _parse_search_form(form) -> tuple[dict, dict]:
 
 
 SEARCH_COLUMNS = ["name", "query", "exclude", "format", "location", "max_price", "incl_shipping",
-                  "free_shipping_only", "condition", "lead_minutes", "interval_minutes", "pickup_mode", "active"]
+                  "free_shipping_only", "condition", "lead_minutes", "interval_minutes", "pickup_mode", "active",
+                  "categories"]
 
 
 def _render_form(request: Request, values: dict, errors: dict, mode: str, sid: int | None = None,
                  status: int = 200) -> HTMLResponse:
     settings = user_settings(request)
+    # Kategorien: vorerst nur eBay (die einzige Plattform mit Kategorien), Auswahl über /kategorien/…
+    category_platform = next((p for p in plattformen.ALL.values() if p.categories), None)
     return render(request, "search_form.html", status_code=status, active="searches", values=values,
                   errors=errors, mode=mode, sid=sid, has_plz=bool(settings["plz"]),
                   radius=db.setting_int(settings, "radius_km", 50),
-                  interval_default=db.setting_int(settings, "interval_minutes", 15))
+                  interval_default=db.setting_int(settings, "interval_minutes", 15),
+                  chosen=kategorien.lookup(values.get("categories", "")), category_platform=category_platform,
+                  categories_max=kategorien.MAX_PER_SEARCH)
 
 
 @app.get("/searches/new", response_class=HTMLResponse)
@@ -612,7 +618,7 @@ async def search_detail(request: Request, sid: int):
     show = request.query_params.get("show")
     hidden = _hidden_views(s, now) if show == "hidden" else []
     return render(request, "search_detail.html", active="searches", s=overview, now=now,
-                  show=show, hidden=hidden)
+                  show=show, hidden=hidden, category_names=kategorien.names(s.get("categories")))
 
 
 def _hidden_views(s: dict, now: float) -> list[dict]:
@@ -714,6 +720,62 @@ async def delete_search(request: Request, sid: int):
     return back("/", "deleted")
 
 
+# ---------------------------------------------------------------- Kategorien (Auswahl im Gesuch-Formular)
+# Liefern HTML-Stücke für den Dialog (includes/category_list.html, app.js „Kategorien“). Gelesen wird nur aus
+# der Datenbank (kategorien.py); fehlt der Baum noch, lädt ihn die erste Anfrage mit den eigenen Zugangsdaten.
+
+async def _category_source(request: Request, key: str) -> tuple[object, str | None]:
+    """(Plattform, Hinweis falls die Kategorien nicht da sind)."""
+    p = plattformen.ALL.get(key)
+    if not p or not p.categories:
+        return None, "Diese Plattform hat keine Kategorien."
+    if kategorien.loaded(p.key):
+        return p, None
+    settings = user_settings(request)
+    if not p.configured(settings):
+        return p, f"Die Kategorien kommen von {p.name}. Trage dafür zuerst deine {p.name}-Zugangsdaten ein."
+    try:
+        await kategorien.refresh(p, settings)   # wartet, falls der Watcher gerade lädt
+    except PlatformError as e:
+        return p, f"Die Kategorien ließen sich gerade nicht laden: {e}"
+    return p, None if kategorien.loaded(p.key) else f"{p.name} hat keine Kategorien geliefert."
+
+
+def _category_list(request: Request, p, rows: list[dict], **ctx) -> HTMLResponse:
+    return render(request, "includes/category_list.html", platform=p, rows=rows, **ctx)
+
+
+@app.get("/kategorien/{key}", response_class=HTMLResponse)
+async def category_children(request: Request, key: str):
+    """Unterkategorien von parent (leer: oberste Ebene)."""
+    p, problem = await _category_source(request, key)
+    if problem:
+        return _category_list(request, p, [], problem=problem)
+    parent = kategorien.get(p.key, request.query_params.get("parent", "")) if request.query_params.get("parent") else None
+    return _category_list(request, p, kategorien.children(p.key, parent["id"] if parent else None), parent=parent,
+                          mode="tree")
+
+
+@app.get("/kategorien/{key}/suche", response_class=HTMLResponse)
+async def category_search(request: Request, key: str):
+    p, problem = await _category_source(request, key)
+    if problem:
+        return _category_list(request, p, [], problem=problem)
+    text = request.query_params.get("q", "")[:80]
+    return _category_list(request, p, kategorien.find(p.key, text), mode="search", text=text)
+
+
+@app.get("/kategorien/{key}/vorschlaege", response_class=HTMLResponse)
+async def category_suggestions(request: Request, key: str):
+    """Kategorien passend zum Suchbegriff des Gesuchs (Abfrage bei der Plattform, einen Tag gemerkt)."""
+    p, problem = await _category_source(request, key)
+    if problem:
+        return _category_list(request, p, [], mode="suggest")
+    text = request.query_params.get("q", "")[:100]
+    rows = await kategorien.suggestions(p, user_settings(request), text)
+    return _category_list(request, p, rows, mode="suggest", text=text)
+
+
 # ---------------------------------------------------------------- Einstellungen
 
 def _settings_page(request: Request, errors: dict | None = None, values: dict | None = None,
@@ -731,6 +793,8 @@ def _settings_page(request: Request, errors: dict | None = None, values: dict | 
                   errors=errors or {}, sessions=sessions, platforms=_platform_panels(stored),
                   ntfy_error=watcher.ntfy_error(user["id"]), has_token=bool(s.get("ntfy_token")),
                   image_cache=images.stats() if user["role"] == "admin" else None,   # Cache: für alle gemeinsam
+                  category_trees=[(p, kategorien.status(p.key)) for p in plattformen.ALL.values() if p.categories]
+                  if user["role"] == "admin" else [],
                   market_lookups_today=market.lookups_today(user["id"]))
 
 

@@ -884,6 +884,160 @@
   }
 
   // ------------------------------------------------------------------
+  // Kategorien im Gesuch-Formular (Issue #13): Dialog zum Durchklicken wie in der eBay-App, dazu Suche
+  // und Vorschläge zum Suchbegriff. Die Listen kommen als HTML von /kategorien/… (category_list.html).
+  // Gewählte Kategorien stehen als Chips mit verstecktem Feld „category“ im Formular.
+
+  var catBox = document.querySelector("[data-categories]");
+  var catDialog = document.querySelector("[data-cat-dialog]");
+
+  if (catBox && catDialog && typeof catDialog.showModal === "function") {
+    var catBase = "/kategorien/" + encodeURIComponent(catBox.dataset.platform);
+    var catMax = Number(catBox.dataset.max) || 10;
+    var catChosen = catBox.querySelector("[data-cat-chosen]");
+    var catTemplate = catBox.querySelector("[data-cat-chip-template]");
+    var catBody = catDialog.querySelector("[data-cat-body]");
+    var catSuggest = catDialog.querySelector("[data-cat-suggest]");
+    var catTitle = catDialog.querySelector("[data-cat-title]");
+    var catBack = catDialog.querySelector("[data-cat-back]");
+    var catSearch = catDialog.querySelector("[data-cat-search]");
+    var catCount = catDialog.querySelector("[data-cat-count]");
+    var catQuery = document.getElementById("query");
+    var catStarted = false;
+    var catCurrent = "";      // angezeigte Ebene (leer: oberste)
+    var catUp = "";           // eine Ebene höher
+    var catSuggested = null;  // Suchbegriff der geladenen Vorschläge
+    var catTimer = null;
+    var catTicket = 0;
+
+    var catKeys = function () {
+      return Array.prototype.map.call(catChosen.querySelectorAll("input[name=category]"), function (i) {
+        return i.value;
+      });
+    };
+
+    var catSync = function () {
+      var keys = catKeys();
+      catDialog.querySelectorAll("[data-cat-pick]").forEach(function (box) {
+        box.checked = keys.indexOf(box.value) !== -1;
+        box.disabled = !box.checked && keys.length >= catMax;
+      });
+      catCount.textContent = keys.length
+        ? keys.length + " von höchstens " + catMax + " gewählt"
+        : "Keine gewählt: Heuhaufen sucht in allen Kategorien.";
+    };
+
+    var catAdd = function (box) {
+      var keys = catKeys();
+      if (keys.indexOf(box.value) !== -1 || keys.length >= catMax) return;
+      var chip = catTemplate.content.firstElementChild.cloneNode(true);
+      var name = chip.querySelector("[data-cat-chip-name]");
+      chip.querySelector("input").value = box.value;
+      name.textContent = box.dataset.name;
+      name.title = box.dataset.path ? box.dataset.path + " › " + box.dataset.name : box.dataset.name;
+      chip.querySelector("[data-cat-remove]").setAttribute("aria-label", box.dataset.name + " entfernen");
+      catChosen.appendChild(chip);
+    };
+
+    var catRemove = function (key) {
+      catChosen.querySelectorAll("input[name=category]").forEach(function (input) {
+        if (input.value === key) input.closest("[data-cat-chip]").remove();
+      });
+    };
+
+    // HTML-Stück laden; bei der Hauptliste zählt nur die zuletzt angefragte (schnelles Tippen, Klicken)
+    var catLoad = function (url, target, done) {
+      var ticket = target === catBody ? ++catTicket : 0;
+      fetch(url, { credentials: "same-origin" })
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.text();
+        })
+        .then(function (html) {
+          if (ticket && ticket !== catTicket) return;
+          target.innerHTML = html;
+          catSync();
+          if (done) done(target.querySelector("[data-cat-list]"));
+        })
+        .catch(function (error) {
+          console.info("Kategorien:", error);
+          if (target === catBody) target.innerHTML = '<p class="py-6 text-over">Die Kategorien ließen sich nicht laden.</p>';
+        });
+    };
+
+    var catShow = function (parent) {
+      catCurrent = parent || "";
+      catLoad(catBase + (catCurrent ? "?parent=" + encodeURIComponent(catCurrent) : ""), catBody, function (list) {
+        if (!list) return;
+        catTitle.textContent = list.dataset.title;
+        catUp = list.dataset.up;
+        catBack.hidden = list.dataset.level !== "sub";
+        catSuggest.hidden = list.dataset.level === "sub";
+        catBody.parentNode.scrollTop = 0;
+      });
+    };
+
+    var catSuggestions = function () {
+      var q = catQuery ? catQuery.value.trim() : "";
+      if (q === catSuggested) return;
+      catSuggested = q;
+      if (q.length < 2) {
+        catSuggest.innerHTML = "";
+        return;
+      }
+      catLoad(catBase + "/vorschlaege?q=" + encodeURIComponent(q), catSuggest);
+    };
+
+    catBox.querySelector("[data-cat-dialog-open]").hidden = false;
+    catBox.querySelector("[data-cat-dialog-open]").addEventListener("click", function () {
+      catDialog.showModal();
+      if (!catStarted) {
+        catStarted = true;
+        catShow("");
+      }
+      catSuggestions();
+      catSync();
+    });
+    catDialog.querySelector("[data-cat-done]").addEventListener("click", function () { catDialog.close(); });
+    catDialog.addEventListener("click", function (e) {
+      if (e.target === catDialog) {   // Klick neben den Dialog
+        catDialog.close();
+        return;
+      }
+      var open = e.target.closest("[data-cat-open]");
+      if (open) catShow(open.dataset.catOpen);
+    });
+    catDialog.addEventListener("change", function (e) {
+      var box = e.target.closest("[data-cat-pick]");
+      if (!box) return;
+      if (box.checked) catAdd(box); else catRemove(box.value);
+      catSync();
+    });
+    catBack.addEventListener("click", function () { catShow(catUp); });
+    catSearch.addEventListener("input", function () {
+      window.clearTimeout(catTimer);
+      catTimer = window.setTimeout(function () {
+        var text = catSearch.value.trim();
+        if (text.length < 2) {
+          catShow(catCurrent);
+          return;
+        }
+        catLoad(catBase + "/suche?q=" + encodeURIComponent(text), catBody, function () {
+          catTitle.textContent = "Suche";
+          catBack.hidden = true;
+          catSuggest.hidden = true;
+        });
+      }, 250);
+    });
+    catChosen.addEventListener("click", function (e) {
+      var remove = e.target.closest("[data-cat-remove]");
+      if (!remove) return;
+      remove.closest("[data-cat-chip]").remove();
+      catSync();
+    });
+  }
+
+  // ------------------------------------------------------------------
   // Nutzer: Text der Einladung kopieren (Knopf erscheint nur mit JavaScript)
 
   function copyText(field) {

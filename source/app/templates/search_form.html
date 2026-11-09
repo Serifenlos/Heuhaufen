@@ -17,6 +17,34 @@
     <p class="{{ ui.hint() }}">So, wie du es bei eBay ins Suchfeld tippen würdest.</p>
   </div>
 
+  {% if category_platform %}
+  {# Kategorien: Auswahl im Dialog unten (app.js „Kategorien“), gewählte als Chips mit verstecktem Feld #}
+  {% set chip = "inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-sm" %}
+  {% set chip_remove = "grid size-6.5 flex-none cursor-pointer place-items-center rounded-full text-base leading-none text-muted hover:bg-tile hover:text-ink" %}
+  <div class="grid min-w-0 gap-2" data-categories data-platform="{{ category_platform.key }}" data-max="{{ categories_max }}">
+    <span class="{{ ui.label() }}" id="categories-label">Nur in diesen Kategorien <span class="font-normal text-muted">optional</span></span>
+    <ul class="flex flex-wrap gap-2 empty:hidden" data-cat-chosen aria-labelledby="categories-label">
+      {%- for c in chosen %}
+      <li class="{{ chip }} {{ '' if c.known else 'border-tight' }}" data-cat-chip>
+        <input type="hidden" name="category" value="{{ c.key }}">
+        <span class="truncate" title="{{ c.path ~ ' › ' ~ c.name if c.path else c.name }}" data-cat-chip-name>{{ c.name }}</span>
+        <button type="button" class="{{ chip_remove }}" data-cat-remove aria-label="{{ c.name }} entfernen">×</button>
+      </li>
+      {%- endfor -%}
+    </ul>
+    <template data-cat-chip-template>
+      <li class="{{ chip }}" data-cat-chip>
+        <input type="hidden" name="category" value="">
+        <span class="truncate" data-cat-chip-name></span>
+        <button type="button" class="{{ chip_remove }}" data-cat-remove aria-label="Entfernen">×</button>
+      </li>
+    </template>
+    <div><button type="button" class="{{ ui.button() }}" data-cat-dialog-open hidden>Kategorie wählen</button></div>
+    {% if chosen|rejectattr('known')|list %}<p class="{{ ui.hint('warn') }}">Gelb markierte Kategorien kennt Heuhaufen (noch) nicht. Gibt es sie bei {{ category_platform.name }} nicht mehr, entferne sie, sonst schlägt die Suche fehl.</p>{% endif %}
+    <p class="{{ ui.hint() }}">Ohne Auswahl sucht Heuhaufen überall. Eine Kategorie schließt ihre Unterkategorien ein. Jede Kategorie ist bei {{ category_platform.name }} eine eigene Suche: Mit drei Kategorien braucht ein Suchlauf dreimal so viele Abfragen.</p>
+  </div>
+  {% endif %}
+
   <div class="grid min-w-0 gap-2">
     <label class="{{ ui.label() }}" for="max_price">Dein Höchstpreis</label>
     <div class="relative max-w-60">
@@ -100,4 +128,25 @@
     <a class="{{ ui.button('quiet') }}" href="{{ cancel }}">Abbrechen</a>
   </div>
 </form>
+
+{% if category_platform %}
+{# Auswahl der Kategorien: wie in der eBay-App zum Durchklicken, dazu Suche und Vorschläge zum Suchbegriff.
+   Auf dem Handy bildschirmfüllend. Steht außerhalb des Formulars, damit Enter im Suchfeld nichts absendet. #}
+<dialog class="m-auto h-[min(720px,88dvh)] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-line bg-canvas p-0 text-ink shadow-xl backdrop:bg-[rgb(0_0_0/0.45)] open:flex max-sm:h-dvh max-sm:max-h-none max-sm:max-w-none max-sm:rounded-none max-sm:border-0"
+        data-cat-dialog aria-labelledby="cat-title">
+  <div class="flex items-center gap-2 border-b border-line px-3 pt-3 pb-3 max-sm:pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+    <button type="button" class="{{ ui.icon_button() }} text-2xl leading-none" data-cat-back hidden aria-label="Zurück">‹</button>
+    <h2 class="min-w-0 flex-1 truncate px-1 text-title" id="cat-title" data-cat-title>Alle Kategorien</h2>
+    <button type="button" class="{{ ui.button('primary') }}" data-cat-done autofocus>Fertig</button>
+  </div>
+  <div class="border-b border-line px-4 py-3">
+    <input class="{{ ui.input() }}" type="search" placeholder="Kategorie finden" autocomplete="off" spellcheck="false" aria-label="Kategorie finden" data-cat-search>
+  </div>
+  <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
+    <div data-cat-suggest></div>
+    <div data-cat-body><p class="py-6 text-muted">Lade Kategorien …</p></div>
+  </div>
+  <p class="border-t border-line px-4 py-2.5 text-meta text-muted max-sm:pb-[calc(env(safe-area-inset-bottom)+0.625rem)]" data-cat-count></p>
+</dialog>
+{% endif %}
 {% endblock %}

@@ -1,6 +1,7 @@
 """SQLite-Speicher. Eine Datei im Datenordner, keine externen Dienste nötig."""
 from __future__ import annotations
 
+import contextlib
 import logging
 import sqlite3
 import threading
@@ -83,6 +84,7 @@ CREATE TABLE IF NOT EXISTS searches (
     interval_minutes    INTEGER,                           -- eigenes Suchintervall, leer: Einstellung
     pickup_mode         TEXT NOT NULL DEFAULT 'radius',    -- radius | all | hide
     platforms           TEXT NOT NULL DEFAULT 'ebay',      -- Plattformen, durch Komma getrennt (plattformen/)
+    categories          TEXT NOT NULL DEFAULT '',          -- nur in diesen Kategorien: ebay:58058,ebay:175672
     user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,   -- wem das Gesuch gehört
     active              INTEGER NOT NULL DEFAULT 1,
     initialized         INTEGER NOT NULL DEFAULT 0,
@@ -148,6 +150,31 @@ CREATE TABLE IF NOT EXISTS hidden_items (
 -- sie nicht mehr online sind, und bilden so über Monate einen Preisverlauf.
 -- key: search:<Gesuch> | epid:<Katalognummer> | nr:<Artikelnummer>
 -- Die Vergleichsangebote sind für alle Konten gemeinsam; user_id: wer zuletzt abgefragt hat (Tageslimit je Konto).
+-- Kategorien der Plattformen (eBay: Taxonomy API), für alle Konten gemeinsam. kategorien.py lädt sie einmal
+-- und prüft wöchentlich, ob es eine neue Fassung gibt (category_trees.version).
+CREATE TABLE IF NOT EXISTS categories (
+    platform   TEXT NOT NULL,
+    id         TEXT NOT NULL,
+    parent_id  TEXT,                       -- leer: oberste Ebene
+    name       TEXT NOT NULL,
+    path       TEXT NOT NULL,              -- Namen der übergeordneten Kategorien, z. B. „Computer, Tablets & Netzwerk › Netzwerk“
+    search     TEXT NOT NULL,              -- Name klein geschrieben, zum Suchen
+    level      INTEGER NOT NULL,
+    leaf       INTEGER NOT NULL DEFAULT 0,
+    position   INTEGER NOT NULL DEFAULT 0, -- Reihenfolge wie bei der Plattform
+    PRIMARY KEY (platform, id)
+);
+CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories(platform, parent_id, position);
+
+CREATE TABLE IF NOT EXISTS category_trees (
+    platform    TEXT PRIMARY KEY,
+    tree_id     TEXT,
+    version     TEXT,
+    count       INTEGER NOT NULL DEFAULT 0,
+    fetched_at  REAL,                      -- zuletzt geladen
+    checked_at  REAL                       -- zuletzt nach einer neuen Fassung gefragt
+);
+
 CREATE TABLE IF NOT EXISTS market_sources (
     key         TEXT PRIMARY KEY,
     fetched_at  REAL NOT NULL,
@@ -306,6 +333,9 @@ def _migrate() -> None:
     for table, column in (("searches", "platforms"), ("items", "platform"), ("hidden_items", "platform")):
         if column not in {r["name"] for r in q(f"PRAGMA table_info({table})")}:
             ex(f"ALTER TABLE {table} ADD COLUMN {column} TEXT NOT NULL DEFAULT 'ebay'")
+    # Kategorien je Gesuch (Issue #13)
+    if "categories" not in _columns("searches"):
+        ex("ALTER TABLE searches ADD COLUMN categories TEXT NOT NULL DEFAULT ''")
     # Abfragen je Konto und Plattform: Tabellen mit neuem Schlüssel anlegen. Bisherige Zahlen gelten für eBay
     # (Tabellen vor 0.3 hatten keine Plattform) und für den Admin.
     if "user_id" not in _columns("api_usage"):
@@ -353,6 +383,19 @@ def ex(sql: str, params: tuple | list = ()) -> int:
     with _lock:
         cur = _conn.execute(sql, params)
         return cur.lastrowid
+
+
+@contextlib.contextmanager
+def transaction():
+    """Mehrere Änderungen ganz oder gar nicht (z. B. Kategorienbaum ersetzen). Liefert die Verbindung."""
+    with _lock:
+        _conn.execute("BEGIN")
+        try:
+            yield _conn
+        except BaseException:
+            _conn.execute("ROLLBACK")
+            raise
+        _conn.execute("COMMIT")
 
 
 # ---------------------------------------------------------------- Einstellungen

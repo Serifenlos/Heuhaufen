@@ -24,11 +24,12 @@ from datetime import datetime
 import httpx
 
 from .. import config, db, geheim
-from .basis import Credential, Found, Plattform, PlatformError, Results
+from .basis import Credential, Found, Plattform, PlatformError, Results, search_categories
 
 log = logging.getLogger("heuhaufen.ebay")
 
 API = "https://api.ebay.com"
+TAXONOMY = "/commerce/taxonomy/v1"   # Kategorien; eigenes Tageslimit, zählt nicht bei der Browse API
 SCOPE = "https://api.ebay.com/oauth/api_scope"
 PAGE_SIZE = 200                # Treffer je Abfrage (höchstens)
 PICKUP_RADIUS_ALL_KM = 1000    # Abholmodus „alle anzeigen“: praktisch ganz Deutschland
@@ -108,13 +109,14 @@ class EbayClient:
         }
 
     async def _get(self, path: str, params: dict | None = None, plz: str = "",
-                   purpose: str | None = "suche") -> httpx.Response:
+                   purpose: str | None = "suche", timeout: float | None = None) -> httpx.Response:
         for attempt in (1, 2):
             token = await self._token_value()
             if purpose:
                 db.count_api_call(purpose, platform="ebay", user_id=self.user_id)
             try:
-                r = await self._http.get(API + path, params=params, headers=self._headers(token, plz))
+                extra = {"timeout": timeout} if timeout else {}
+                r = await self._http.get(API + path, params=params, headers=self._headers(token, plz), **extra)
             except httpx.HTTPError as e:
                 raise EbayError(f"eBay ist nicht erreichbar ({e.__class__.__name__}).") from e
             if r.status_code == 401 and attempt == 1:
@@ -157,6 +159,34 @@ class EbayClient:
         if r.status_code != 200:
             raise EbayError(_error_text(r))
         return r.json()
+
+    # ------------------------------------------------------------ Kategorien (Taxonomy API)
+
+    async def _taxonomy(self, path: str, params: dict | None = None, timeout: float | None = None) -> dict | None:
+        r = await self._get(TAXONOMY + path, params, purpose=None, timeout=timeout)
+        if r.status_code == 204:
+            return None
+        if r.status_code != 200:
+            raise EbayError(_error_text(r))
+        return r.json()
+
+    async def default_tree(self) -> tuple[str, str]:
+        """(Baum-Nummer, Fassung) für den Marktplatz, bei eBay.de der Baum 77."""
+        data = await self._taxonomy("/get_default_category_tree_id",
+                                    {"marketplace_id": config.EBAY_MARKETPLACE}) or {}
+        if not data.get("categoryTreeId"):
+            raise EbayError("eBay liefert keinen Kategorienbaum für diesen Marktplatz.")
+        return str(data["categoryTreeId"]), str(data.get("categoryTreeVersion") or "")
+
+    async def category_tree(self, tree_id: str) -> dict:
+        """Der ganze Baum. Groß (viele MB), httpx fragt gzip-komprimiert an."""
+        return await self._taxonomy(f"/category_tree/{urllib.parse.quote(tree_id, safe='')}",
+                                    timeout=180.0) or {}
+
+    async def category_suggestions(self, tree_id: str, q: str) -> list[dict]:
+        data = await self._taxonomy(f"/category_tree/{urllib.parse.quote(tree_id, safe='')}/get_category_suggestions",
+                                    {"q": q}) or {}
+        return data.get("categorySuggestions") or []
 
     async def rate_limits(self) -> dict:
         """Kontingent der Browse API laut eBay (Developer Analytics API)."""
@@ -303,6 +333,26 @@ def parse_detail(d: dict) -> dict:
     }
 
 
+def flatten_tree(tree: dict) -> list[dict]:
+    """getCategoryTree → Liste mit CATEGORY_FIELDS, Eltern vor Kindern. Die Wurzel selbst (laut eBay
+    ohne verlässliche Nummer und Namen) fällt weg; ihre Kinder sind die oberste Ebene."""
+    out: list[dict] = []
+    root = tree.get("rootCategoryNode") or {}
+    stack = [(child, None, 1, n) for n, child in enumerate(root.get("childCategoryTreeNodes") or [])]
+    stack.reverse()
+    while stack:
+        node, parent, level, position = stack.pop()
+        cat = node.get("category") or {}
+        cid, name = str(cat.get("categoryId") or ""), (cat.get("categoryName") or "").strip()
+        if not cid or not name:
+            continue
+        children = node.get("childCategoryTreeNodes") or []
+        out.append({"id": cid, "parent": parent, "name": name, "level": level,
+                    "leaf": bool(node.get("leafCategoryTreeNode")) or not children, "position": position})
+        stack.extend(reversed([(child, cid, level + 1, n) for n, child in enumerate(children)]))
+    return out
+
+
 # ---------------------------------------------------------------- Plattform
 
 class EbayPlattform(Plattform):
@@ -315,11 +365,13 @@ class EbayPlattform(Plattform):
     image_hosts = (".ebayimg.com", ".ebaystatic.com")
     auctions = True
     details = True
+    categories = True
 
     def __init__(self) -> None:
         self._clients: dict[object, EbayClient] = {}   # je Konto ein Client mit eigenem Token
         self._pickup_runs: dict[int, float] = {}    # Gesuch → letzte Abholsuche
-        self._split_until: dict[int, float] = {}    # Gesuch → bis dann Auktion und Sofortkauf getrennt suchen
+        self._split_until: dict[tuple, float] = {}  # (Gesuch, Kategorie) → bis dann Auktion und Sofortkauf getrennt
+        self._tree_id: str | None = None             # Kategorienbaum des Marktplatzes (eBay.de: 77)
 
     parse = staticmethod(parse_listing)
     condition_class = staticmethod(condition_class)
@@ -383,7 +435,7 @@ class EbayPlattform(Plattform):
     # ------------------------------------------------------------ Suchen
 
     async def _search_shipped(self, client: EbayClient, s: dict, formats: list[str], plz: str,
-                              now: float) -> list[dict]:
+                              now: float, category: str | None = None) -> list[dict]:
         """Angebote mit Versand nach Deutschland (Strategie siehe oben)."""
         def filters(fmts: list[str]) -> list[str]:
             f = self._base_filters(s) + [
@@ -395,16 +447,18 @@ class EbayPlattform(Plattform):
                 f.append("maxDeliveryCost:0")
             return f
 
+        extra = {"category_ids": category} if category else None
+        split = (s["id"], category)
         found: list[dict] = []
-        if len(formats) > 1 and now >= self._split_until.get(s["id"], 0):
-            together = await client.search(s["query"], filters(formats), None, plz, max_pages=1)
+        if len(formats) > 1 and now >= self._split_until.get(split, 0):
+            together = await client.search(s["query"], filters(formats), None, plz, max_pages=1, extra=extra)
             if getattr(together, "complete", True):
                 return list(together)
-            self._split_until[s["id"]] = now + SPLIT_FOR   # zu viele Treffer: eine Weile gleich getrennt
+            self._split_until[split] = now + SPLIT_FOR   # zu viele Treffer: eine Weile gleich getrennt
             found.extend(together)
         for fmt in formats:
             sort = "endingSoonest" if fmt == "AUCTION" else "newlyListed"
-            found.extend(await client.search(s["query"], filters([fmt]), sort, plz))
+            found.extend(await client.search(s["query"], filters([fmt]), sort, plz, extra=extra))
         return found
 
     async def find(self, s: dict, settings: dict, now: float) -> Found:
@@ -414,10 +468,14 @@ class EbayPlattform(Plattform):
         pickup_wanted = s["pickup_mode"] != "hide" and bool(plz)
         pickup_now = pickup_wanted and (s["last_run"] is None
                                         or now - self._pickup_runs.get(s["id"], 0) >= PICKUP_EVERY)
+        # eBay nimmt je Abfrage nur eine Kategorie: mehrere Kategorien = je Kategorie eine eigene Suche.
+        # Eine Kategorie schließt ihre Unterkategorien ein.
+        categories: list[str | None] = search_categories(s, self.key) or [None]
         found: dict[str, tuple[dict, bool]] = {}
-        for summary in await self._search_shipped(client, s, formats, plz, now):
-            if summary.get("itemId"):
-                found[summary["itemId"]] = (summary, False)
+        for category in categories:
+            for summary in await self._search_shipped(client, s, formats, plz, now, category):
+                if summary.get("itemId"):
+                    found[summary["itemId"]] = (summary, False)
         if pickup_now:
             search_radius = radius if s["pickup_mode"] == "radius" else PICKUP_RADIUS_ALL_KM
             filters = self._base_filters(s) + [
@@ -428,9 +486,11 @@ class EbayPlattform(Plattform):
                 f"pickupRadius:{search_radius}",
                 "pickupRadiusUnit:km",
             ]
-            for summary in await client.search(s["query"], filters, None, plz):
-                if summary.get("itemId"):   # auch Angebote mit Versand: so kennt Heuhaufen die Entfernung
-                    found[summary["itemId"]] = (summary, True)
+            for category in categories:
+                extra = {"category_ids": category} if category else None
+                for summary in await client.search(s["query"], filters, None, plz, extra=extra):
+                    if summary.get("itemId"):   # auch Angebote mit Versand: so kennt Heuhaufen die Entfernung
+                        found[summary["itemId"]] = (summary, True)
             self._pickup_runs[s["id"]] = now
         return Found(found, keep_pickup=pickup_wanted and not pickup_now)
 
@@ -457,6 +517,28 @@ class EbayPlattform(Plattform):
         results = await client.search(q, filters, None, plz, max_pages=1, extra=extra, purpose="durchschnitt")
         complete = len(results) < PAGE_SIZE   # vor dem Filtern: hat eBay alles geliefert?
         return [parse_listing(x) for x in results], complete
+
+    # ------------------------------------------------------------ Kategorien
+
+    async def _tree(self, client: EbayClient) -> tuple[str, str]:
+        tree_id, version = await client.default_tree()
+        self._tree_id = tree_id
+        return tree_id, version
+
+    async def category_version(self, settings: dict) -> str:
+        return (await self._tree(self._client(settings)))[1]
+
+    async def category_tree(self, settings: dict) -> tuple[str, list[dict]]:
+        client = self._client(settings)
+        tree_id, version = await self._tree(client)
+        data = await client.category_tree(tree_id)
+        return str(data.get("categoryTreeVersion") or version), flatten_tree(data)
+
+    async def category_suggestions(self, settings: dict, query: str) -> list[str]:
+        client = self._client(settings)
+        tree_id = self._tree_id or (await self._tree(client))[0]
+        return [str((x.get("category") or {}).get("categoryId")) for x in await client.category_suggestions(tree_id, query)
+                if (x.get("category") or {}).get("categoryId")]
 
     # ------------------------------------------------------------ Bilder, Verbindung
 

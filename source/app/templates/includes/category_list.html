@@ -1,0 +1,40 @@
+{% import "includes/ui.html" as ui %}
+{#
+  Liste im Dialog „Kategorien“ (search_form.html, app.js „Kategorien“), geladen über /kategorien/…
+  mode: tree (Unterkategorien von parent) | search (Treffer zu text) | suggest (passend zum Suchbegriff).
+  Ankreuzen wählt eine Kategorie samt Unterkategorien, Name oder Pfeil öffnet die Unterkategorien.
+#}
+<div data-cat-list data-mode="{{ mode }}" data-title="{{ parent.name if parent else 'Alle Kategorien' }}" data-up="{{ parent.parent_id or '' if parent else '' }}" data-level="{{ 'sub' if parent else 'top' }}">
+  {% if problem %}<p class="{{ ui.notice() }} my-3">{{ problem }}</p>{% endif %}
+  {% if mode == 'suggest' and rows %}<h3 class="mt-4 mb-1 text-sm font-semibold text-ink-2">Passend zu „{{ text }}“</h3>{% endif %}
+  {% if mode == 'search' and not rows %}<p class="py-4 text-muted">Keine Kategorie mit „{{ text }}“ im Namen.</p>{% endif %}
+  {% if mode == 'tree' and parent %}
+  <label class="flex cursor-pointer items-center gap-3 border-b border-line py-3">
+    <input type="checkbox" class="size-5 flex-none cursor-pointer accent-accent disabled:cursor-not-allowed" value="{{ parent.key }}" data-cat-pick data-name="{{ parent.name }}" data-path="{{ parent.path }}">
+    <span class="font-medium">Ganz „{{ parent.name }}“</span>
+  </label>
+  {% endif %}
+  {% if rows %}
+  <ul class="grid">
+    {% for c in rows %}
+    <li class="flex min-h-12 items-center gap-3 border-b border-line">
+      <input type="checkbox" class="size-5 flex-none cursor-pointer accent-accent disabled:cursor-not-allowed" id="cat-{{ mode }}-{{ c.id }}" value="{{ c.key }}" data-cat-pick data-name="{{ c.name }}" data-path="{{ c.path }}" aria-label="{{ c.name }} wählen">
+      {% if c.leaf %}
+      <label class="grid min-w-0 flex-1 cursor-pointer py-2.5" for="cat-{{ mode }}-{{ c.id }}">
+        <span>{{ c.name }}</span>
+        {% if mode != 'tree' and c.path %}<span class="truncate text-meta text-muted">{{ c.path }}</span>{% endif %}
+      </label>
+      {% else %}
+      <button type="button" class="flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-3 py-2.5 text-left" data-cat-open="{{ c.id }}">
+        <span class="grid min-w-0">
+          <span>{{ c.name }}</span>
+          {% if mode != 'tree' and c.path %}<span class="truncate text-meta text-muted">{{ c.path }}</span>{% endif %}
+        </span>
+        <span class="text-xl leading-none text-muted" aria-hidden="true">›</span>
+      </button>
+      {% endif %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>

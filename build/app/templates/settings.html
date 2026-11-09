@@ -330,6 +330,9 @@
     <dl class="grid gap-2.5">
       <div class="{{ fact }}"><dt class="text-muted">Version</dt><dd class="{{ ui.num() }} text-right">{{ app_version }}</dd></div>
       {% if is_admin %}<div class="{{ fact }}"><dt class="text-muted">Bild-Cache</dt><dd class="{{ ui.num() }} text-right">{{ image_cache.count }} {{ 'Bild' if image_cache.count == 1 else 'Bilder' }}, {{ '%.1f'|format(image_cache.megabytes)|replace('.', ',') }} MB</dd></div>{% endif %}
+      {% for pf, tree in category_trees %}
+      <div class="{{ fact }}"><dt class="text-muted">{{ pf.name }}-Kategorien</dt><dd class="text-right">{% if tree and tree.count %}<span class="{{ ui.num() }}">{{ '{:,}'.format(tree.count).replace(',', '.') }}</span>, geprüft {{ ago(tree.checked_at) }}{% else %}noch nicht geladen{% endif %}</dd></div>
+      {% endfor %}
     </dl>
     <p><a href="{{ repo_url }}/tags" target="_blank" rel="noopener noreferrer">Versionen auf GitHub ansehen</a></p>
   </div>
