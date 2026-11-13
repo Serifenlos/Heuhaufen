@@ -10,11 +10,18 @@
   <h1 class="-mb-1">{{ 'Neues Gesuch' if mode == 'new' else 'Gesuch bearbeiten' }}</h1>
 
   <div class="grid min-w-0 gap-2">
-    <label class="{{ ui.label() }}" for="query">Wonach suchst du?</label>
+    <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="query">Wonach suchst du?</label>{{ ui.info('query') }}</div>
     <input class="{{ ui.input('hero') }}" id="query" name="query" value="{{ values.query }}" placeholder="zum Beispiel Leica M6" autocomplete="off"
            {% if mode == 'new' %}autofocus{% endif %} {% if errors.query %}aria-invalid="true" aria-describedby="query-error"{% endif %}>
     {{ ui.error(errors, 'query') }}
-    <p class="{{ ui.hint() }}">So, wie du es bei eBay ins Suchfeld tippen würdest.</p>
+    {# Suchoperatoren (Issue #18): nur, was die Browse API laut eBay versteht #}
+    {% call ui.info_panel('query', 'Suchbegriff') %}
+    <li>So, wie du es bei eBay ins Suchfeld tippen würdest.</li>
+    <li>Leerzeichen: alle Wörter müssen vorkommen, <code class="{{ ui.code() }}">leica m6</code></li>
+    <li>Klammern mit Komma: eines der Wörter reicht, <code class="{{ ui.code() }}">leica (m6, m7)</code></li>
+    <li>Platzhalter wie <code class="{{ ui.code() }}">*</code> gehen nicht.</li>
+    <li>Wörter ausschließen: unter „Weitere Optionen“.</li>
+    {% endcall %}
   </div>
 
   {% if category_platform %}
@@ -22,7 +29,7 @@
   {% set chip = "inline-flex max-w-full items-center gap-1 rounded-full border border-line bg-surface py-1 pr-1 pl-3 text-sm" %}
   {% set chip_remove = "grid size-6.5 flex-none cursor-pointer place-items-center rounded-full text-base leading-none text-muted hover:bg-tile hover:text-ink" %}
   <div class="grid min-w-0 gap-2" data-categories data-platform="{{ category_platform.key }}" data-max="{{ categories_max }}">
-    <span class="{{ ui.label() }}" id="categories-label">Nur in diesen Kategorien <span class="font-normal text-muted">optional</span></span>
+    <div class="flex items-center gap-1"><span class="{{ ui.label() }}" id="categories-label">Nur in diesen Kategorien <span class="font-normal text-muted">optional</span></span>{{ ui.info('categories') }}</div>
     <ul class="flex flex-wrap gap-2 empty:hidden" data-cat-chosen aria-labelledby="categories-label">
       {%- for c in chosen %}
       <li class="{{ chip }} {{ '' if c.known else 'border-tight' }}" data-cat-chip>
@@ -41,14 +48,17 @@
     </template>
     <div><button type="button" class="{{ ui.button() }}" data-cat-dialog-open hidden>Kategorie wählen</button></div>
     {% if chosen|rejectattr('known')|list %}<p class="{{ ui.hint('warn') }}">Gelb markierte Kategorien kennt Heuhaufen (noch) nicht. Gibt es sie bei {{ category_platform.name }} nicht mehr, entferne sie, sonst schlägt die Suche fehl.</p>{% endif %}
-    <p class="{{ ui.hint() }}">Ohne Auswahl sucht Heuhaufen überall. Eine Kategorie schließt ihre Unterkategorien ein. Jede Kategorie ist bei {{ category_platform.name }} eine eigene Suche: Mit drei Kategorien braucht ein Suchlauf dreimal so viele Abfragen.</p>
+    {{ ui.info_panel('categories', 'Kategorien', [
+         'Ohne Auswahl sucht Heuhaufen überall.',
+         'Eine Kategorie schließt ihre Unterkategorien ein.',
+         'Jede Kategorie ist bei ' ~ category_platform.name ~ ' eine eigene Suche: drei Kategorien brauchen pro Suchlauf dreimal so viele Abfragen.']) }}
   </div>
 
   {# Artikelmerkmale (Issue #12): freie Paare aus Merkmal und Wert. Ist das letzte Paar ausgefüllt, kommt ein
      neues dazu (app.js „Artikelmerkmale“). Vorschläge aus den gewählten Kategorien über /merkmale/… #}
   {% set aspect_input = ui.input() ~ " min-w-0" %}
   <div class="grid min-w-0 gap-2" data-aspects data-platform="{{ category_platform.key }}">
-    <span class="{{ ui.label() }}" id="aspects-label">Nur mit diesen Artikelmerkmalen <span class="font-normal text-muted">optional</span></span>
+    <div class="flex items-center gap-1"><span class="{{ ui.label() }}" id="aspects-label">Nur mit diesen Artikelmerkmalen <span class="font-normal text-muted">optional</span></span>{{ ui.info('aspects') }}</div>
     <div class="grid gap-2" data-aspect-rows aria-labelledby="aspects-label">
       {% for name, value in values.aspect_rows + [('', '')] %}
       <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2" data-aspect-row>
@@ -69,7 +79,11 @@
     <datalist id="aspect-values"></datalist>
     {% if errors.aspects %}<p class="{{ ui.hint('warn') }} font-medium text-over" id="aspects-error" role="alert">{{ errors.aspects }}</p>{% endif %}
     <p class="{{ ui.hint('warn') }}" data-aspect-needs-category {% if chosen or not values.aspect_rows or errors.aspects %}hidden{% endif %}>Artikelmerkmale gehen nur zusammen mit einer Kategorie, so verlangt es {{ category_platform.name }}.</p>
-    <p class="{{ ui.hint() }}">So, wie es bei {{ category_platform.name }} unter „Artikelmerkmale“ steht, zum Beispiel Größe und M. Gleiches Merkmal mehrmals: einer der Werte reicht (Größe M oder L). Verschiedene Merkmale müssen alle passen. Mit gewählter Kategorie schlägt das Feld passende Merkmale und Werte vor.</p>
+    {{ ui.info_panel('aspects', 'Artikelmerkmale', [
+         'So, wie es bei ' ~ category_platform.name ~ ' unter „Artikelmerkmale“ steht, zum Beispiel Größe und M.',
+         'Gleiches Merkmal mehrmals: einer der Werte reicht (Größe M oder L).',
+         'Verschiedene Merkmale müssen alle passen.',
+         'Geht nur mit gewählter Kategorie. Dann schlägt das Feld passende Merkmale und Werte vor.']) }}
   </div>
   {% endif %}
 
@@ -84,7 +98,7 @@
   </div>
 
   <div class="grid border-t border-line">
-    {{ ui.switch('incl_shipping', 'Versandkosten einrechnen', 'Der Höchstpreis gilt dann für Preis plus Versand.', values.incl_shipping) }}
+    {{ ui.switch('incl_shipping', 'Versandkosten einrechnen', 'Der Höchstpreis gilt für Preis plus Versand.', values.incl_shipping) }}
     {{ ui.switch('free_shipping_only', 'Nur versandkostenfrei', 'Angebote mit Versandkosten werden ausgeblendet.', values.free_shipping_only) }}
   </div>
 
@@ -104,9 +118,11 @@
   </div>
 
   <fieldset class="grid min-w-0 gap-2">
-    <legend class="{{ ui.label() }} mb-2">Artikelstandort</legend>
+    <legend class="{{ ui.label() }} mb-2">Artikelstandort {{ ui.info('location') }}</legend>
     {{ ui.segmented('location', [('DE', 'Deutschland'), ('EU', 'EU'), ('WORLD', 'Weltweit')], values.location) }}
-    <p class="{{ ui.hint() }}">Gezeigt werden nur Angebote, die nach Deutschland verschickt werden. Außerhalb der EU können Zoll und Einfuhrumsatzsteuer dazukommen; das steht dann in der Benachrichtigung.</p>
+    {{ ui.info_panel('location', 'Artikelstandort', [
+         'Gezeigt werden nur Angebote, die nach Deutschland verschickt werden.',
+         'Außerhalb der EU können Zoll und Einfuhrumsatzsteuer dazukommen. Das steht dann in der Benachrichtigung.']) }}
   </fieldset>
 
   <fieldset class="grid min-w-0 gap-2">
@@ -115,31 +131,43 @@
   </fieldset>
 
   <fieldset class="grid min-w-0 gap-2">
-    <legend class="{{ ui.label() }} mb-2">Angebote nur zur Abholung</legend>
-    <div class="grid gap-1">
-      {{ ui.choice('pickup_mode', 'radius', values.pickup_mode, 'Im Umkreis von ' ~ radius ~ ' km', 'Den Umkreis legst du in den Einstellungen fest.') }}
-      {{ ui.choice('pickup_mode', 'all', values.pickup_mode, 'Alle zeigen', 'Mit Entfernung, deutlich markiert in der Benachrichtigung.') }}
-      {{ ui.choice('pickup_mode', 'hide', values.pickup_mode, 'Ausblenden', 'Nur Angebote mit Versand.') }}
+    <legend class="{{ ui.label() }} mb-2">Angebote nur zur Abholung {{ ui.info('pickup') }}</legend>
+    <div class="grid gap-0.5">
+      {{ ui.choice('pickup_mode', 'radius', values.pickup_mode, 'Im Umkreis von ' ~ radius ~ ' km') }}
+      {{ ui.choice('pickup_mode', 'all', values.pickup_mode, 'Alle zeigen') }}
+      {{ ui.choice('pickup_mode', 'hide', values.pickup_mode, 'Ausblenden') }}
     </div>
+    {% call ui.info_panel('pickup', 'Angebote nur zur Abholung') %}
+    <li>Im Umkreis: nur Abholangebote bis {{ radius }} km. Den Umkreis legst du in den Einstellungen fest.</li>
+    <li>Alle zeigen: mit Entfernung, in der Benachrichtigung deutlich markiert.</li>
+    <li>Ausblenden: nur Angebote mit Versand.</li>
+    {% endcall %}
     {% if not has_plz %}<p class="{{ ui.hint('warn') }}">Dafür braucht Heuhaufen deine Postleitzahl. <a href="/settings#standort">PLZ eintragen</a></p>{% endif %}
   </fieldset>
 
   <details class="group/more border-y border-line py-3.5" {% if values.exclude or values.name or values.interval_raw or errors.interval_minutes %}open{% endif %}>
     <summary class="flex cursor-pointer list-none justify-between font-medium [&::-webkit-details-marker]:hidden after:text-xl after:leading-none after:text-muted after:content-['+'] group-open/more:mb-4.5 group-open/more:after:content-['–']">Weitere Optionen</summary>
     <div class="grid min-w-0 gap-2">
-      <label class="{{ ui.label() }}" for="interval_minutes">Eigenes Suchintervall</label>
+      <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="interval_minutes">Eigenes Suchintervall</label>{{ ui.info('interval') }}</div>
       <div class="relative max-w-50">
         <input class="{{ ui.input('unit') }}" id="interval_minutes" name="interval_minutes" inputmode="numeric" value="{{ values.interval_raw }}" placeholder="{{ interval_default }}"
                {% if errors.interval_minutes %}aria-invalid="true" aria-describedby="interval_minutes-error"{% endif %}>
         <span class="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-ui text-muted" aria-hidden="true">Minuten</span>
       </div>
       {{ ui.error(errors, 'interval_minutes') }}
-      <p class="{{ ui.hint() }}">Leer lassen, dann gilt die Einstellung ({{ interval_default }} Minuten). Seltener suchen spart eBay-Abfragen. Bei reinen Auktionen reichen meist 60 Minuten: Die Erinnerung vor Auktionsende kommt trotzdem pünktlich, weil Heuhaufen jede gemerkte Auktion kurz vor Ende eigens prüft.</p>
+      {{ ui.info_panel('interval', 'Eigenes Suchintervall', [
+           'Leer lassen: Es gilt die Einstellung (' ~ interval_default ~ ' Minuten).',
+           'Seltener suchen spart eBay-Abfragen.',
+           'Bei reinen Auktionen reichen meist 60 Minuten.',
+           'Die Erinnerung vor Auktionsende kommt trotzdem pünktlich: Heuhaufen prüft jede gemerkte Auktion kurz vor Ende eigens.']) }}
     </div>
     <div class="mt-5 grid min-w-0 gap-2">
-      <label class="{{ ui.label() }}" for="exclude">Ausschließen, wenn der Titel enthält</label>
+      <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="exclude">Ausschließen, wenn der Titel enthält</label>{{ ui.info('exclude') }}</div>
       <input class="{{ ui.input() }}" id="exclude" name="exclude" value="{{ values.exclude }}" placeholder="defekt, Ersatzteil, Bastler" autocomplete="off">
-      <p class="{{ ui.hint() }}">Mehrere Wörter mit Komma trennen.</p>
+      {{ ui.info_panel('exclude', 'Ausschließen', [
+           'Kommt eines der Wörter im Titel vor, fällt das Angebot weg.',
+           'Wörter mit Komma oder Leerzeichen trennen.',
+           'Groß- und Kleinschreibung egal, auch Wortteile zählen: „defekt“ trifft auch „defekte“.']) }}
     </div>
     <div class="mt-5 grid min-w-0 gap-2">
       <label class="{{ ui.label() }}" for="name">Eigener Name</label>

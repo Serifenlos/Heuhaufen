@@ -21,8 +21,11 @@
     </div>
     <label class="flex cursor-pointer items-start gap-2.5 text-ui">
       <input class="{{ ui.checkbox() }}" type="checkbox" name="remember" value="1">
-      <span>Angemeldet bleiben <span class="{{ ui.hint() }}">3 Monate auf diesem Gerät</span></span>
+      <span>Angemeldet bleiben {{ ui.info('remember') }}</span>
     </label>
+    {{ ui.info_panel('remember', 'Angemeldet bleiben', [
+         'Mit Haken: 3 Monate auf diesem Gerät.',
+         'Ohne: abgemeldet nach einer Stunde ohne Aktivität, spätestens nach 12 Stunden.']) }}
     <button class="{{ ui.button('primary', wide=true) }}" type="submit">Anmelden</button>
   </form>
 </div>

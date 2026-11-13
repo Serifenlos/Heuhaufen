@@ -43,31 +43,38 @@
     </div>
     <div class="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-5">
       <div class="grid min-w-0 gap-2">
-        <label class="{{ ui.label() }}" for="lead_minutes">Erinnerung vor Auktionsende</label>
+        <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="lead_minutes">Erinnerung vor Auktionsende</label>{{ ui.info('lead') }}</div>
         <div class="relative max-w-60">
           <input class="{{ ui.input('unit') }}" id="lead_minutes" name="lead_minutes" value="{{ s.lead_minutes }}" inputmode="numeric" {% if errors.lead_minutes %}aria-invalid="true"{% endif %}>
           <span class="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-ui text-muted" aria-hidden="true">Min</span>
         </div>
-        <p class="{{ ui.hint() }}">Vorgabe für neue Gesuche.</p>
         {{ ui.error(errors, 'lead_minutes') }}
+        {{ ui.info_panel('lead', 'Erinnerung vor Auktionsende', 'Vorgabe für neue Gesuche. Jedes Gesuch kann eine eigene haben.') }}
       </div>
       <div class="grid min-w-0 gap-2">
-        <label class="{{ ui.label() }}" for="interval_minutes">Suchintervall</label>
+        <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="interval_minutes">Suchintervall</label>{{ ui.info('interval') }}</div>
         <div class="relative max-w-60">
           <input class="{{ ui.input('unit') }}" id="interval_minutes" name="interval_minutes" value="{{ s.interval_minutes }}" inputmode="numeric" {% if errors.interval_minutes %}aria-invalid="true"{% endif %}>
           <span class="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-ui text-muted" aria-hidden="true">Min</span>
         </div>
-        <p class="{{ ui.hint() }}">So oft wird nach neuen Angeboten gesucht. Im Gesuch unter „Weitere Optionen“ kannst du ein eigenes Intervall festlegen.</p>
         {{ ui.error(errors, 'interval_minutes') }}
+        {{ ui.info_panel('interval', 'Suchintervall', [
+             'So oft sucht Heuhaufen nach neuen Angeboten.',
+             'Ein eigenes Intervall pro Gesuch geht unter „Weitere Optionen“.']) }}
       </div>
     </div>
     {# Gilt für die ganze Installation (alle Konten, Einladungslinks), deshalb nur für den Admin #}
     {% if is_admin %}
     <div class="grid min-w-0 gap-2">
-      <label class="{{ ui.label() }}" for="app_url">Adresse von Heuhaufen <span class="font-normal text-muted">optional, für alle Konten</span></label>
+      <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="app_url">Adresse von Heuhaufen <span class="font-normal text-muted">optional, für alle Konten</span></label>{{ ui.info('app_url') }}</div>
       <input class="{{ ui.input() }}" id="app_url" name="app_url" value="{{ s.app_url }}" placeholder="http://192.168.178.20:8765" autocomplete="off" {% if errors.app_url %}aria-invalid="true"{% endif %}>
-      <p class="{{ ui.hint() }}">Dann enthält jede Benachrichtigung auch einen Link zurück zu Heuhaufen, das Artikelbild kommt aus dem eigenen Bild-Cache statt von eBay, und es gibt den Knopf „1 Min vorher erinnern“. Das Handy muss diese Adresse erreichen können, sonst fehlen Bild und Knopf.</p>
       {{ ui.error(errors, 'app_url') }}
+      {{ ui.info_panel('app_url', 'Adresse von Heuhaufen', [
+           'Jede Benachrichtigung bekommt einen Link zurück zu Heuhaufen.',
+           'Das Artikelbild kommt aus dem eigenen Bild-Cache statt von eBay.',
+           'Dazu gibt es den Knopf „1 Min vorher erinnern“.',
+           'Das Handy muss diese Adresse erreichen können, sonst fehlen Bild und Knopf.',
+           'Einladungslinks für andere Nutzer verwenden sie auch.']) }}
     </div>
     {% endif %}
     <div class="flex flex-wrap items-center gap-2.5"><button class="{{ ui.button('primary') }}" type="submit">Speichern</button></div>
@@ -82,7 +89,9 @@
   <form class="{{ stack }}" method="post" action="/settings/display">
     {{ ui.csrf_field(csrf) }}
     <div class="grid">
-      {{ ui.switch('price_with_shipping', 'Preise mit Versand anzeigen', 'Groß steht der Preis mit Versand, darunter klein Artikelpreis und Versand. Ausgeschaltet steht groß nur der Artikelpreis.', s.price_with_shipping == '1') }}
+      {{ ui.switch('price_with_shipping', 'Preise mit Versand anzeigen', [
+           'An: groß der Preis mit Versand, darunter klein Artikelpreis und Versand.',
+           'Aus: groß nur der Artikelpreis.'], s.price_with_shipping == '1') }}
     </div>
     <div class="flex flex-wrap items-center gap-2.5"><button class="{{ ui.button('primary') }}" type="submit">Speichern</button></div>
   </form>
@@ -97,35 +106,43 @@
     {{ ui.csrf_field(csrf) }}
     <div class="grid">
       {{ ui.switch('market_enabled', 'Durchschnittspreis anzeigen', 'Kostet pro Gesuch eine eBay-Abfrage am Tag.', s.market_enabled == '1') }}
-      {{ ui.switch('market_split', 'Neu und gebraucht getrennt vergleichen', 'Gebrauchte Angebote nur mit gebrauchten, neue nur mit neuen.', s.market_split == '1') }}
+      {{ ui.switch('market_split', 'Neu und gebraucht getrennt vergleichen', 'Gebrauchte Angebote nur mit gebrauchten vergleichen, neue nur mit neuen.', s.market_split == '1') }}
     </div>
     <div class="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-5">
       <div class="grid min-w-0 content-start gap-2">
-        <label class="{{ ui.label() }}" for="market_threshold">Grün markieren ab</label>
+        <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="market_threshold">Grün markieren ab</label>{{ ui.info('market_threshold') }}</div>
         <div class="relative max-w-60">
           <input class="{{ ui.input('unit') }}" id="market_threshold" name="market_threshold" value="{{ s.market_threshold }}" inputmode="numeric" {% if errors.market_threshold %}aria-invalid="true"{% endif %}>
           <span class="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-ui text-muted" aria-hidden="true">% unter Ø</span>
         </div>
-        <p class="{{ ui.hint() }}">Dann wird die Abweichung grün. Genauso weit über dem Ø wird sie bernsteinfarben.</p>
         {{ ui.error(errors, 'market_threshold') }}
+        {{ ui.info_panel('market_threshold', 'Grün markieren ab', [
+             'So weit unter dem Ø wird die Abweichung grün.',
+             'Genauso weit über dem Ø wird sie bernsteinfarben.']) }}
       </div>
       <div class="grid min-w-0 content-start gap-2">
-        <label class="{{ ui.label() }}" for="market_months">Zeitraum</label>
+        <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="market_months">Zeitraum</label>{{ ui.info('market_months') }}</div>
         <div class="relative max-w-60">
           <input class="{{ ui.input('unit') }}" id="market_months" name="market_months" value="{{ s.market_months }}" inputmode="numeric" {% if errors.market_months %}aria-invalid="true"{% endif %}>
           <span class="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-ui text-muted" aria-hidden="true">Monate</span>
         </div>
-        <p class="{{ ui.hint() }}">So lange zählen Angebote für den Ø mit, auch wenn sie nicht mehr online sind. Höchstens 24 Monate.</p>
         {{ ui.error(errors, 'market_months') }}
+        {{ ui.info_panel('market_months', 'Zeitraum', [
+             'So lange zählen Angebote für den Ø mit, auch wenn sie nicht mehr online sind.',
+             'Höchstens 24 Monate.']) }}
       </div>
       <div class="grid min-w-0 content-start gap-2">
-        <label class="{{ ui.label() }}" for="market_lookups">Gezielte Abfragen höchstens</label>
+        <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="market_lookups">Gezielte Abfragen höchstens</label>{{ ui.info('market_lookups') }}</div>
         <div class="relative max-w-60">
           <input class="{{ ui.input('unit') }}" id="market_lookups" name="market_lookups" value="{{ s.market_lookups }}" inputmode="numeric" {% if errors.market_lookups %}aria-invalid="true"{% endif %}>
           <span class="pointer-events-none absolute top-1/2 right-3.5 -translate-y-1/2 text-ui text-muted" aria-hidden="true">pro Tag</span>
         </div>
-        <p class="{{ ui.hint() }}">Für Angebote mit Artikel- oder Katalognummer sucht Heuhaufen gezielt nach Vergleichsangeboten und frischt sie wöchentlich auf. 0 schaltet das ab. Heute: {{ market_lookups_today }}.</p>
         {{ ui.error(errors, 'market_lookups') }}
+        {{ ui.info_panel('market_lookups', 'Gezielte Abfragen', [
+             'Für Angebote mit Artikel- oder Katalognummer sucht Heuhaufen gezielt nach Vergleichsangeboten.',
+             'Einmal pro Woche aufgefrischt.',
+             '0 schaltet das ab.',
+             'Heute verbraucht: ' ~ market_lookups_today ~ '.']) }}
       </div>
     </div>
     <div class="flex flex-wrap items-center gap-2.5"><button class="{{ ui.button('primary') }}" type="submit">Speichern</button></div>
@@ -151,10 +168,10 @@
         {{ ui.error(errors, 'ntfy_topic') }}
       </div>
       <div class="grid min-w-0 gap-2">
-        <label class="{{ ui.label() }}" for="ntfy_token">Access-Token</label>
+        <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="ntfy_token">Access-Token</label>{{ ui.info('ntfy_token') }}</div>
         <input class="{{ ui.input() }}" id="ntfy_token" name="ntfy_token" type="password" value="" autocomplete="off"
                placeholder="{{ 'Gespeichert, zum Ändern neu eingeben' if has_token else 'tk_…' }}">
-        <p class="{{ ui.hint() }}">Empfohlen, weil dein ntfy-Server aus dem Internet erreichbar ist.</p>
+        {{ ui.info_panel('ntfy_token', 'Access-Token', 'Empfohlen, weil dein ntfy-Server aus dem Internet erreichbar ist.') }}
         {% if has_token %}
         <label class="flex cursor-pointer items-start gap-2.5 text-note"><input class="{{ ui.checkbox() }}" type="checkbox" name="clear_token" value="1"> Gespeicherten Token entfernen</label>
         {% endif %}
@@ -195,7 +212,7 @@
       <div class="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-5">
         <div class="grid min-w-0 gap-2">
           <label class="{{ ui.label() }}" for="new">Neues Passwort</label>
-          <input class="{{ ui.input() }}" id="new" name="new" type="password" autocomplete="new-password" minlength="10" {% if errors.new %}aria-invalid="true"{% endif %}>
+          <input class="{{ ui.input() }}" id="new" name="new" type="password" autocomplete="new-password" minlength="10" placeholder="Mindestens 10 Zeichen" {% if errors.new %}aria-invalid="true"{% endif %}>
           {{ ui.error(errors, 'new') }}
         </div>
         <div class="grid min-w-0 gap-2">
@@ -261,14 +278,14 @@
       {{ ui.csrf_field(csrf) }}
       {% for c in pf.credentials %}
       <div class="grid min-w-0 gap-2">
-        <label class="{{ ui.label() }}" for="{{ c.key }}">{{ c.label }}</label>
+        <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="{{ c.key }}">{{ c.label }}</label>{% if c.hint %}{{ ui.info(c.key) }}{% endif %}</div>
         {% if c.secret %}
         <input class="{{ ui.input() }}" id="{{ c.key }}" name="{{ c.key }}" type="password" value="" autocomplete="off" data-bwignore spellcheck="false"
                placeholder="{{ 'Gespeichert (' ~ pf.hints[c.key] ~ '), zum Ändern neu eingeben' if pf.hints[c.key] else '' }}">
         {% else %}
         <input class="{{ ui.input() }}" id="{{ c.key }}" name="{{ c.key }}" value="{{ s[c.key] or '' }}" autocomplete="off" data-bwignore spellcheck="false">
         {% endif %}
-        {% if c.hint %}<p class="{{ ui.hint() }}">{{ c.hint }}</p>{% endif %}
+        {% if c.hint %}{{ ui.info_panel(c.key, c.label, c.hint) }}{% endif %}
       </div>
       {% endfor %}
       <div class="flex flex-wrap items-center gap-2.5"><button class="{{ ui.button('primary') }}" type="submit">Speichern</button></div>

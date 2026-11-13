@@ -1066,8 +1066,12 @@
     return !!document.querySelector(".pswp--open");
   }
 
+  // Offener Dialog (Kategorien) oder offenes Info-Fenster (ui.info_panel, Popover). Browser ohne Popover
+  // kennen den Selektor :popover-open nicht, deshalb erst nachsehen.
+  var canPopover = typeof document.body.showPopover === "function";
+
   function dialogOpen() {
-    return !!document.querySelector("dialog[open]");
+    return !!document.querySelector("dialog[open]") || (canPopover && !!document.querySelector(":popover-open"));
   }
 
   // Liegt der Finger in einem Bereich, der selbst nach oben/unten scrollt?

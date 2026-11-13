@@ -167,6 +167,39 @@ font-num tabular-nums
 {% if errors.get(key) %}<p class="text-meta font-medium text-over" id="{{ key }}-error">{{ errors[key] }}</p>{% endif %}
 {%- endmacro %}
 
+{#
+  Erklärungen zu Feldern (Issue #19): statt Text unter dem Feld ein kleines ⓘ hinter der Beschriftung, das ein
+  Fenster mit Stichpunkten öffnet. Das ist ein Popover des Browsers: geht ohne JavaScript, Esc oder Tippen daneben
+  schließt es, die Seite dahinter bleibt, wie sie ist.
+  info(id): der Knopf. info_panel(id, title, items): das Fenster, items ein Text oder eine Liste von Texten, oder
+  ohne items mit {% call %} eigene <li>-Zeilen (für Links, Code, Werte). Das Fenster nie in ein <label> setzen
+  (ein Tippen darauf schaltet sonst das Feld um) und ihm keine display-Klasse geben (der Browser blendet es
+  über display: none aus). Ältere Browser ohne Popover zeigen den Kasten einfach an seiner Stelle.
+#}
+{% macro info(id) -%}
+<button type="button" class="-my-1.5 inline-grid size-7 flex-none cursor-pointer place-items-center rounded-full align-middle font-normal text-muted hover:bg-tile hover:text-ink" popovertarget="info-{{ id }}" aria-label="Erklärung" title="Erklärung">
+  <svg class="size-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><circle cx="12" cy="7.6" r="0.5" fill="currentColor"/></svg>
+</button>
+{%- endmacro %}
+
+{% macro info_panel(id, title, items=none) -%}
+<div popover id="info-{{ id }}" role="dialog" aria-labelledby="info-{{ id }}-title" data-info
+     class="m-auto max-h-[85dvh] w-[min(28rem,calc(100vw-2rem))] overflow-y-auto overscroll-contain rounded-2xl border border-line bg-surface p-5 text-ink shadow-xl backdrop:bg-[rgb(0_0_0/0.45)]">
+  <div class="flex items-start justify-between gap-3">
+    <h2 class="pt-0.5 text-title" id="info-{{ id }}-title">{{ title }}</h2>
+    <button type="button" class="{{ icon_button() }} -mt-1.5 -mr-2 text-2xl leading-none" popovertarget="info-{{ id }}" popovertargetaction="hide" aria-label="Schließen">×</button>
+  </div>
+  <ul class="mt-3 grid list-disc gap-1.5 pl-5 text-note text-ink-2 marker:text-muted">
+    {%- if items is not none %}{% for item in ([items] if items is string else items) %}<li>{{ item }}</li>{% endfor %}{% else %}{{ caller() }}{% endif -%}
+  </ul>
+</div>
+{%- endmacro %}
+
+{# Beispiel in einem Info-Fenster, z. B. (m6, m7) #}
+{% macro code() -%}
+rounded bg-tile px-1 py-px font-mono text-[0.92em] text-ink
+{%- endmacro %}
+
 {# Segment-Auswahl mit Radiobuttons. options: Liste aus (Wert, Beschriftung) #}
 {% macro segmented(name, options, current) -%}
 <div class="inline-flex max-w-full gap-0.5 rounded-control bg-tile p-0.75">
@@ -179,27 +212,23 @@ font-num tabular-nums
 </div>
 {%- endmacro %}
 
-{# Zeile mit Ein/Aus-Schalter #}
+{# Zeile mit Ein/Aus-Schalter. help: Erklärung im Info-Fenster (Text oder Liste von Stichpunkten) #}
 {% macro switch(name, text, help, checked) -%}
-<label class="flex cursor-pointer items-center justify-between gap-5 border-b border-line py-3.5">
-  <span class="grid gap-0.5">
-    <span class="font-medium">{{ text }}</span>
-    <span class="{{ hint() }}">{{ help }}</span>
-  </span>
-  <input type="checkbox" name="{{ name }}" value="1" {% if checked %}checked{% endif %}
+{#- for/id: sonst gehörte die Beschriftung zum ⓘ-Knopf (erstes beschriftbares Element darin) statt zum Schalter #}
+<label class="flex cursor-pointer items-center justify-between gap-5 border-b border-line py-3.5" for="switch-{{ name }}">
+  <span class="flex min-w-0 items-center gap-1 font-medium">{{ text }}{% if help %}{{ info(name) }}{% endif %}</span>
+  <input type="checkbox" id="switch-{{ name }}" name="{{ name }}" value="1" {% if checked %}checked{% endif %}
          class="relative h-7 w-11.5 flex-none cursor-pointer appearance-none rounded-full bg-line transition-colors duration-160 checked:bg-accent motion-reduce:transition-none
                 after:absolute after:top-0.75 after:left-0.75 after:size-5.5 after:rounded-full after:bg-surface after:shadow-[0_1px_2px_rgb(0_0_0/0.18)] after:transition-transform after:duration-160 checked:after:translate-x-4.5 motion-reduce:after:transition-none dark:after:shadow-none">
 </label>
+{%- if help %}{{ info_panel(name, text, help) }}{% endif %}
 {%- endmacro %}
 
-{# Radiobutton mit Beschriftung und Erklärung #}
-{% macro choice(name, value, current, text, help) -%}
-<label class="flex cursor-pointer items-start gap-3 py-0.5">
+{# Radiobutton mit Beschriftung (Erklärungen stehen im Info-Fenster der ganzen Gruppe) #}
+{% macro choice(name, value, current, text) -%}
+<label class="flex cursor-pointer items-center gap-3 py-1">
   <input type="radio" name="{{ name }}" value="{{ value }}" {% if current == value %}checked{% endif %}
-         class="mt-0.5 size-5 flex-none cursor-pointer appearance-none rounded-full border-[1.5px] border-control bg-surface checked:border-accent checked:bg-accent checked:shadow-[inset_0_0_0_4.5px_var(--color-surface)]">
-  <span class="grid gap-px">
-    <span class="text-ui font-medium text-ink">{{ text }}</span>
-    <span class="{{ hint() }}">{{ help }}</span>
-  </span>
+         class="size-5 flex-none cursor-pointer appearance-none rounded-full border-[1.5px] border-control bg-surface checked:border-accent checked:bg-accent checked:shadow-[inset_0_0_0_4.5px_var(--color-surface)]">
+  <span class="text-ui font-medium text-ink">{{ text }}</span>
 </label>
 {%- endmacro %}
