@@ -639,7 +639,7 @@ def _render_form(request: Request, values: dict, errors: dict, mode: str, sid: i
                   radius=db.setting_int(settings, "radius_km", 50),
                   interval_default=db.setting_int(settings, "interval_minutes", 15),
                   chosen=kategorien.lookup(values.get("categories", "")), category_platform=category_platform,
-                  categories_max=kategorien.MAX_PER_SEARCH)
+                  categories_max=kategorien.MAX_PER_SEARCH, aspects_max=kategorien.MAX_ASPECTS)
 
 
 @app.get("/searches/new", response_class=HTMLResponse)

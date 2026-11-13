@@ -28,7 +28,7 @@ SUGGEST_FOR = 86400              # Vorschläge zu einem Suchbegriff so lange mer
 MAX_PER_SEARCH = 10              # Kategorien je Gesuch (jede kostet pro Suchlauf eine eigene Abfrage)
 SEP = " › "
 
-ASPECT_CATEGORIES = 3            # Merkmal-Vorschläge aus höchstens so vielen Kategorien (je eine Abfrage)
+ASPECT_CATEGORIES = MAX_PER_SEARCH   # Merkmal-Vorschläge aus allen gewählten Kategorien (je eine Abfrage, einen Tag gemerkt)
 
 _lock = asyncio.Lock()
 _suggested: dict[tuple[str, str], tuple[float, list[str]]] = {}
@@ -202,36 +202,50 @@ async def suggestions(p: Plattform, settings: dict, query: str, limit: int = 6) 
 
 # ---------------------------------------------------------------- Artikelmerkmale (Issue #12)
 
-MAX_ASPECTS = 10                 # Merkmal-Wert-Paare je Gesuch
+MAX_ASPECTS = 30                 # Werte je Gesuch, über alle Merkmale zusammen (je Merkmal eine Zeile im Formular)
 
 
-def parse_aspects(names: list, values: list) -> tuple[str, list[tuple[str, str]], str | None]:
+def _clean(text) -> str:
+    return " ".join(str(text).split())[:100]   # eBay erlaubt 65 Zeichen
+
+
+def parse_aspects(names: list, values: list) -> tuple[str, list[tuple[str, list[str]]], str | None]:
     """Formularfelder aspect_name/aspect_value → (JSON für searches.aspects, Zeilen zum erneuten Anzeigen,
-    Fehlertext). Gleiches Merkmal mehrmals: Werte zusammen (eines reicht). Leere Zeilen fallen weg."""
-    rows: list[tuple[str, str]] = []
+    Fehlertext). Je Zeile ein Merkmal; aspect_value enthält dessen Werte, getrennt durch Zeilenumbrüche
+    (app.js, Issue #16), einer reicht. Gleiches Merkmal in mehreren Zeilen: Werte zusammen. Leere Zeilen fallen weg."""
+    rows: list[tuple[str, list[str]]] = []
     error = None
-    for name, value in zip(names, values):
-        name, value = " ".join(str(name).split())[:60], " ".join(str(value).split())[:60]
-        if not name and not value:
+    for name, raw in zip(names, values):
+        name = _clean(name)
+        vals: list[str] = []
+        for v in str(raw).split("\n"):
+            v = _clean(v)
+            if v and v.casefold() not in [x.casefold() for x in vals]:
+                vals.append(v)
+        if not name and not vals:
             continue
-        rows.append((name, value))
-        if not name or not value:
-            error = "Zu jedem Merkmal gehört ein Wert, zum Beispiel Größe und M."
-    if len(rows) > MAX_ASPECTS:
-        error = f"Höchstens {MAX_ASPECTS} Merkmale."
+        rows.append((name, vals))
+        if not name or not vals:
+            error = "Zu jedem Merkmal gehört mindestens ein Wert, zum Beispiel Größe und M."
+    count = 0
     merged: dict[str, dict] = {}
-    for name, value in rows[:MAX_ASPECTS]:
-        if name and value:
+    for name, vals in rows:
+        for v in vals if name else []:
+            count += 1
+            if count > MAX_ASPECTS:
+                break
             a = merged.setdefault(name.casefold(), {"name": name, "values": []})
-            if value.casefold() not in [v.casefold() for v in a["values"]]:
-                a["values"].append(value)
+            if v.casefold() not in [x.casefold() for x in a["values"]]:
+                a["values"].append(v)
+    if count > MAX_ASPECTS:
+        error = f"Höchstens {MAX_ASPECTS} Werte je Gesuch."
     data = list(merged.values())
     return (json.dumps(data, ensure_ascii=False) if data else ""), rows, error
 
 
-def aspect_rows(aspects_json: str) -> list[tuple[str, str]]:
-    """searches.aspects → Zeilen für das Formular (je Wert eine Zeile)."""
-    return [(a["name"], v) for a in search_aspects({"aspects": aspects_json}) for v in a["values"]]
+def aspect_rows(aspects_json: str) -> list[tuple[str, list[str]]]:
+    """searches.aspects → Zeilen für das Formular (je Merkmal eine Zeile mit seinen Werten)."""
+    return [(a["name"], list(a["values"])) for a in search_aspects({"aspects": aspects_json})]
 
 
 def aspect_text(aspects_json: str) -> str:
@@ -272,6 +286,7 @@ async def aspect_suggestions(p: Plattform, settings: dict, query: str, keys) -> 
             for v, n in vals:
                 values.setdefault(k, {})
                 values[k][v] = values[k].get(v, 0) + n
-    names = sorted(counts, key=lambda k: -counts[k])[:60]
+    # alles, was die Plattform liefert, ohne Kürzung (Issue #16: auch seltene Marken); die Liste filtert beim Tippen
+    names = sorted(counts, key=lambda k: -counts[k])
     return {"names": [[spelled[k], counts[k]] for k in names],
-            "values": {spelled[k]: [[v, n] for v, n in sorted(values[k].items(), key=lambda x: -x[1])][:50] for k in names}}
+            "values": {spelled[k]: [[v, n] for v, n in sorted(values[k].items(), key=lambda x: -x[1])] for k in names}}

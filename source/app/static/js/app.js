@@ -1327,21 +1327,29 @@
   }
 
   // ------------------------------------------------------------------
-  // Artikelmerkmale im Gesuch-Formular (Issue #12): Paare aus Merkmal und Wert. Ist das letzte Paar
-  // ausgefüllt, kommt ein leeres dazu. Ohne Kategorie ein Hinweis: eBay filtert nur in Kategorien.
+  // Artikelmerkmale im Gesuch-Formular (Issue #12): je Zeile ein Merkmal mit einem oder mehreren Werten
+  // (einer reicht). Werte stehen als Chips im Feld rechts: eintippen und Enter, aus der Liste wählen oder beim
+  // Verlassen des Felds übernommen; Rücktaste im leeren Feld nimmt den letzten zurück. Gespeichert werden sie
+  // im versteckten aspect_value, getrennt durch Zeilenumbrüche (kategorien.parse_aspects). Höchstens
+  // data-max Werte je Gesuch. Ist die letzte Zeile ausgefüllt, kommt eine leere dazu. Ohne Kategorie ein
+  // Hinweis: eBay filtert nur in Kategorien.
   // Vorschläge aus den gewählten Kategorien über /merkmale/…, geladen beim ersten Klick in ein Feld, in einer
   // eigenen Liste unter dem Feld (Issue #16, statt <datalist>): mit der Zahl der Angebote bei eBay, beim Tippen
-  // gefiltert, oben ein Schalter Häufigkeit ⇄ A–Z (auf diesem Gerät gemerkt). Pfeiltasten, Enter, Esc.
-  // Am Handy steht die Liste über dem Feld, wenn darunter wegen der Tastatur kein Platz ist.
+  // gefiltert, oben ein Schalter Häufigkeit ⇄ A–Z (auf diesem Gerät gemerkt). Pfeiltasten, Enter, Esc. Schon
+  // gewählte Werte fehlen in der Liste, sie bleibt nach der Wahl offen für weitere. Am Handy steht sie über dem
+  // Feld, wenn darunter wegen der Tastatur kein Platz ist.
 
   var aspBox = document.querySelector("[data-aspects]");
 
   if (aspBox) {
     var aspRows = aspBox.querySelector("[data-aspect-rows]");
     var aspTemplate = aspBox.querySelector("[data-aspect-template]");
+    var aspChipTemplate = aspBox.querySelector("[data-aspect-chip-template]");
     var aspNeeds = aspBox.querySelector("[data-aspect-needs-category]");
+    var aspLimit = aspBox.querySelector("[data-aspect-limit]");
     var aspError = aspBox.querySelector("#aspects-error");
     var aspChosen = document.querySelector("[data-cat-chosen]");
+    var aspMax = Number(aspBox.dataset.max) || 30;
     var aspData = { names: [], values: {} };
     var aspLoaded = null;
     var aspPending = false;
@@ -1361,8 +1369,70 @@
       console.info("Heuhaufen: Sortierung der Vorschläge nicht lesbar (" + error.name + ")");
     }
 
-    var aspInputs = function (row) {
-      return row.querySelectorAll("input");
+    // ---- Zeilen und Werte
+
+    var rowName = function (row) {
+      return row.querySelector("[name=aspect_name]");
+    };
+
+    var rowEntry = function (row) {
+      return row.querySelector("[data-aspect-value-input]");
+    };
+
+    var rowValues = function (row) {
+      return row.querySelector("[name=aspect_value]").value.split("\n").filter(function (v) { return v.trim(); });
+    };
+
+    var allValues = function () {
+      return Array.prototype.reduce.call(aspRows.querySelectorAll("[data-aspect-row]"), function (n, row) {
+        return n + rowValues(row).length;
+      }, 0);
+    };
+
+    var clean = function (text) {
+      return text.replace(/\s+/g, " ").trim().slice(0, 100);
+    };
+
+    var setValues = function (row, values) {
+      row.querySelector("[name=aspect_value]").value = values.join("\n");
+      var box = row.querySelector("[data-aspect-values]");
+      var entry = rowEntry(row);
+      Array.prototype.forEach.call(box.querySelectorAll("[data-aspect-chip]"), function (chip) { chip.remove(); });
+      values.forEach(function (v) {
+        var chip = aspChipTemplate.content.firstElementChild.cloneNode(true);
+        chip.querySelector("[data-chip-text]").textContent = v;
+        chip.querySelector("[data-chip-remove]").setAttribute("aria-label", v + " entfernen");
+        box.insertBefore(chip, entry);
+      });
+      entry.placeholder = values.length ? "oder …" : "Wert";
+      row.toggleAttribute("data-many", values.length >= 3);   // am Handy dann volle Breite (search_form.html)
+    };
+
+    // Wert übernehmen: ohne doppelte (Groß/klein egal), höchstens aspMax je Gesuch
+    var addValue = function (row, text) {
+      var value = clean(text);
+      var values = rowValues(row);
+      if (!value) return false;
+      if (values.some(function (v) { return v.toLowerCase() === value.toLowerCase(); })) return true;
+      if (allValues() >= aspMax) {
+        aspLimit.hidden = false;
+        return false;
+      }
+      setValues(row, values.concat([value]));
+      return true;
+    };
+
+    var removeValue = function (row, index) {
+      var values = rowValues(row);
+      values.splice(index, 1);
+      setValues(row, values);
+      aspLimit.hidden = allValues() < aspMax;
+    };
+
+    // Angefangenen Wert übernehmen (Feld verlassen, Formular abschicken)
+    var commitEntry = function (row) {
+      var entry = rowEntry(row);
+      if (entry.value.trim() && addValue(row, entry.value)) entry.value = "";
     };
 
     var aspCategories = function () {
@@ -1373,36 +1443,48 @@
     var aspCheck = function () {
       var rows = aspRows.querySelectorAll("[data-aspect-row]");
       var last = rows[rows.length - 1];
-      if (!last || (aspInputs(last)[0].value.trim() && aspInputs(last)[1].value.trim())) {
+      if (!last || (rowName(last).value.trim() && (rowValues(last).length || rowEntry(last).value.trim()))) {
         aspRows.appendChild(aspTemplate.content.firstElementChild.cloneNode(true));
       }
-      var any = Array.prototype.some.call(aspRows.querySelectorAll("input"), function (i) { return i.value.trim(); });
+      var any = Array.prototype.some.call(aspRows.querySelectorAll("[data-aspect-row]"), function (row) {
+        return rowName(row).value.trim() || rowValues(row).length || rowEntry(row).value.trim();
+      });
       aspNeeds.hidden = !any || aspCategories().length > 0 || !!(aspError && !aspError.hidden);
       if (aspError && aspCategories().length) aspError.hidden = true;   // Kategorie nachgetragen
     };
 
-    // Vorschläge für ein Feld: Merkmale, oder die Werte zum Merkmal derselben Zeile (Groß/klein egal)
+    // ---- Vorschlagsliste
+
+    var isName = function (input) {
+      return input.name === "aspect_name";
+    };
+
+    // Vorschläge für ein Feld: Merkmale, oder die Werte zum Merkmal derselben Zeile (Groß/klein egal),
+    // ohne die schon gewählten
     var sugItemsFor = function (input) {
-      if (input.name === "aspect_name") return aspData.names || [];
-      var name = input.closest("[data-aspect-row]").querySelector("[name=aspect_name]").value.trim().toLowerCase();
+      if (isName(input)) return aspData.names || [];
+      var row = input.closest("[data-aspect-row]");
+      var name = rowName(row).value.trim().toLowerCase();
       var values = aspData.values || {};
       var match = Object.keys(values).filter(function (k) { return k.toLowerCase() === name; })[0];
-      return match ? values[match] : [];
+      var chosen = rowValues(row).map(function (v) { return v.toLowerCase(); });
+      return (match ? values[match] : []).filter(function (item) { return chosen.indexOf(item[0].toLowerCase()) === -1; });
     };
 
     // Liste an die Zeile hängen: links bündig mit dem Feld, mindestens 240 px breit, nicht über die Zeile hinaus.
-    // Unter dem Feld, außer dort ist (Tastatur am Handy) zu wenig Platz und darüber mehr.
+    // Unter der Zeile, außer dort ist (Tastatur am Handy) zu wenig Platz und darüber mehr.
     var sugPlace = function () {
       var input = sugState.input;
       if (!input || sug.hidden) return;
       var row = input.closest("[data-aspect-row]");
-      var width = Math.min(row.clientWidth, Math.max(input.offsetWidth, 240));
+      var anchor = input.closest("[data-aspect-values]") || input;
+      var width = Math.min(row.clientWidth, Math.max(anchor.offsetWidth, 240));
       sug.style.width = width + "px";
-      sug.style.left = Math.max(0, Math.min(input.offsetLeft, row.clientWidth - width)) + "px";
+      sug.style.left = Math.max(0, Math.min(anchor.offsetLeft, row.clientWidth - width)) + "px";
       var view = window.visualViewport;
       var viewTop = view ? view.offsetTop : 0;
       var viewBottom = view ? view.offsetTop + view.height : window.innerHeight;
-      var box = input.getBoundingClientRect();
+      var box = row.getBoundingClientRect();
       var below = viewBottom - box.bottom - 12;
       var above = box.top - viewTop - 12;
       var up = below < 200 && above > below;
@@ -1448,7 +1530,7 @@
       input.removeAttribute("aria-activedescendant");
       sugSortLabel.textContent = sugState.az ? "A–Z" : "Häufigkeit";
       sugSort.setAttribute("aria-pressed", String(sugState.az));
-      var what = input.name === "aspect_name" ? "Merkmale" : "Werte";
+      var what = isName(input) ? "Merkmale" : "Werte";
       if (aspPending && !all.length) {
         sugCount.textContent = "Lade Vorschläge …";
       } else if (needle) {
@@ -1477,22 +1559,29 @@
       if (sug.parentNode !== row) row.appendChild(sug);
       sugState.input = input;
       sugState.items = sugItemsFor(input);
-      sugState.filter = "";   // beim Hineinklicken alle zeigen, auch wenn schon etwas drinsteht
+      sugState.filter = isName(input) ? "" : input.value;   // Merkmal: beim Hineinklicken alle zeigen
       sugRender();
     };
 
     var sugChoose = function (value) {
       var input = sugState.input;
       if (!input) return;
-      input.value = value;
-      input.dispatchEvent(new window.Event("input", { bubbles: true }));
       var row = input.closest("[data-aspect-row]");
-      var valueInput = row.querySelector("[name=aspect_value]");
-      if (input.name === "aspect_name" && !valueInput.value.trim()) {
-        valueInput.focus();   // gleich weiter zum Wert, dessen Liste öffnet sich
-      } else {
-        sugClose();
+      if (isName(input)) {
+        input.value = value;
+        input.dispatchEvent(new window.Event("input", { bubbles: true }));
+        if (rowValues(row).length) {
+          sugClose();
+        } else {
+          rowEntry(row).focus();   // gleich weiter zum Wert, dessen Liste sich öffnet
+        }
+        return;
       }
+      if (addValue(row, value)) input.value = "";
+      aspCheck();
+      sugState.items = sugItemsFor(input);   // offen lassen für weitere Werte
+      sugState.filter = "";
+      sugRender();
     };
 
     var aspLoad = function () {
@@ -1523,8 +1612,10 @@
     };
 
     var isAspectInput = function (el) {
-      return el && (el.name === "aspect_name" || el.name === "aspect_value");
+      return !!el && (el.name === "aspect_name" || el.hasAttribute("data-aspect-value-input"));
     };
+
+    // ---- Ereignisse
 
     aspRows.addEventListener("input", function (e) {
       aspCheck();
@@ -1539,13 +1630,20 @@
       sugOpen(e.target);
     });
     aspRows.addEventListener("focusout", function (e) {
+      if (!isAspectInput(e.target)) return;
+      if (e.target.hasAttribute("data-aspect-value-input")) {
+        commitEntry(e.target.closest("[data-aspect-row]"));
+        aspCheck();
+      }
       if (e.target === sugState.input && !sug.contains(e.relatedTarget)) sugClose();
     });
     aspRows.addEventListener("keydown", function (e) {
       if (!isAspectInput(e.target)) return;
-      var open = sugState.input === e.target && !sug.hidden;
+      var input = e.target;
+      var row = input.closest("[data-aspect-row]");
+      var open = sugState.input === input && !sug.hidden;
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-        if (!open) sugOpen(e.target);
+        if (!open) sugOpen(input);
         if (!sugList.children.length) return;
         e.preventDefault();
         var step = e.key === "ArrowDown" ? 1 : -1;
@@ -1553,10 +1651,56 @@
       } else if (e.key === "Enter" && open && sugState.active >= 0) {
         e.preventDefault();   // nicht das Formular abschicken
         sugChoose(sugState.shown[sugState.active][0]);
+      } else if (e.key === "Enter" && !isName(input) && input.value.trim()) {
+        e.preventDefault();   // getippten Wert als Chip übernehmen
+        if (addValue(row, input.value)) input.value = "";
+        aspCheck();
+        if (sugState.input === input) {
+          sugState.items = sugItemsFor(input);
+          sugState.filter = "";
+          sugRender();
+        }
+      } else if (e.key === "Backspace" && !isName(input) && !input.value && rowValues(row).length) {
+        removeValue(row, rowValues(row).length - 1);
+        aspCheck();
+        if (sugState.input === input) {
+          sugState.items = sugItemsFor(input);
+          sugRender();
+        }
       } else if (e.key === "Escape" && open) {
         e.preventDefault();
         sugClose();
       }
+    });
+    aspRows.addEventListener("click", function (e) {
+      var row = e.target.closest("[data-aspect-row]");
+      if (!row) return;
+      var chipRemove = e.target.closest("[data-chip-remove]");
+      if (chipRemove) {
+        var chips = Array.prototype.slice.call(row.querySelectorAll("[data-aspect-chip]"));
+        removeValue(row, chips.indexOf(chipRemove.closest("[data-aspect-chip]")));
+        aspCheck();
+        rowEntry(row).focus();
+        if (sugState.input === rowEntry(row)) {
+          sugState.items = sugItemsFor(rowEntry(row));
+          sugRender();
+        }
+        return;
+      }
+      if (e.target.closest("[data-aspect-remove]")) {
+        sugClose();
+        if (aspRows.querySelectorAll("[data-aspect-row]").length > 1) {
+          row.remove();
+        } else {
+          rowName(row).value = "";
+          rowEntry(row).value = "";
+          setValues(row, []);
+        }
+        aspLimit.hidden = allValues() < aspMax;
+        aspCheck();
+        return;
+      }
+      if (e.target.hasAttribute("data-aspect-values")) rowEntry(row).focus();   // Klick ins Feld neben die Chips
     });
     // Tippen in die Liste: Fokus bleibt im Feld (Tastatur am Handy bleibt offen), Scrollen geht weiter
     sug.addEventListener("mousedown", function (e) { e.preventDefault(); });
@@ -1575,24 +1719,18 @@
       var option = e.target.closest("[role=option]");
       if (option) sugChoose(option.dataset.value);
     });
+    // Abschicken: angefangene Werte mitnehmen
+    var aspForm = aspBox.closest("form");
+    if (aspForm) {
+      aspForm.addEventListener("submit", function () {
+        Array.prototype.forEach.call(aspRows.querySelectorAll("[data-aspect-row]"), commitEntry);
+      });
+    }
     if (window.visualViewport) {
       window.visualViewport.addEventListener("resize", sugPlace);
       window.visualViewport.addEventListener("scroll", sugPlace);
     }
     window.addEventListener("resize", sugPlace);
-
-    aspRows.addEventListener("click", function (e) {
-      var remove = e.target.closest("[data-aspect-remove]");
-      if (!remove) return;
-      sugClose();
-      var row = remove.closest("[data-aspect-row]");
-      if (aspRows.querySelectorAll("[data-aspect-row]").length > 1) {
-        row.remove();
-      } else {
-        aspInputs(row).forEach(function (i) { i.value = ""; });
-      }
-      aspCheck();
-    });
     if (aspChosen && typeof window.MutationObserver === "function") {
       new window.MutationObserver(aspCheck).observe(aspChosen, { childList: true });
     }
