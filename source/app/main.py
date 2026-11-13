@@ -840,7 +840,8 @@ async def category_suggestions(request: Request, key: str):
 @app.get("/merkmale/{key}")
 async def aspect_suggestions(request: Request, key: str):
     """Vorschläge für Artikelmerkmale (Issue #12): Merkmale und Werte in den gewählten Kategorien (?c=…),
-    passend zum Suchbegriff (?q=…). Abfrage bei der Plattform, einen Tag gemerkt (kategorien.py)."""
+    passend zum Suchbegriff (?q=…), mit Anzahl der Angebote (Issue #16, Sortierung in app.js). Abfrage bei
+    der Plattform, einen Tag gemerkt (kategorien.py)."""
     p = plattformen.ALL.get(key)
     if not p or not p.categories:
         return JSONResponse({"names": [], "values": {}}, 404)

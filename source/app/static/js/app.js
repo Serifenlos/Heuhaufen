@@ -1085,7 +1085,7 @@
 
   function noPull(target) {
     return galleryOpen() || dialogOpen() || inScrollArea(target) ||
-      !!(target.closest && target.closest(".pswp, dialog, input, textarea, select"));
+      !!(target.closest && target.closest(".pswp, dialog, input, textarea, select, [data-aspect-suggest]"));
   }
 
   if (pull && standalone) {
@@ -1328,8 +1328,11 @@
 
   // ------------------------------------------------------------------
   // Artikelmerkmale im Gesuch-Formular (Issue #12): Paare aus Merkmal und Wert. Ist das letzte Paar
-  // ausgefüllt, kommt ein leeres dazu. Vorschläge (datalist) aus den gewählten Kategorien über /merkmale/…,
-  // geladen beim ersten Klick in ein Feld. Ohne Kategorie ein Hinweis: eBay filtert nur in Kategorien.
+  // ausgefüllt, kommt ein leeres dazu. Ohne Kategorie ein Hinweis: eBay filtert nur in Kategorien.
+  // Vorschläge aus den gewählten Kategorien über /merkmale/…, geladen beim ersten Klick in ein Feld, in einer
+  // eigenen Liste unter dem Feld (Issue #16, statt <datalist>): mit der Zahl der Angebote bei eBay, beim Tippen
+  // gefiltert, oben ein Schalter Häufigkeit ⇄ A–Z (auf diesem Gerät gemerkt). Pfeiltasten, Enter, Esc.
+  // Am Handy steht die Liste über dem Feld, wenn darunter wegen der Tastatur kein Platz ist.
 
   var aspBox = document.querySelector("[data-aspects]");
 
@@ -1338,11 +1341,25 @@
     var aspTemplate = aspBox.querySelector("[data-aspect-template]");
     var aspNeeds = aspBox.querySelector("[data-aspect-needs-category]");
     var aspError = aspBox.querySelector("#aspects-error");
-    var aspNames = document.getElementById("aspect-names");
-    var aspValues = document.getElementById("aspect-values");
     var aspChosen = document.querySelector("[data-cat-chosen]");
     var aspData = { names: [], values: {} };
     var aspLoaded = null;
+    var aspPending = false;
+
+    var sug = aspBox.querySelector("[data-aspect-suggest]");
+    var sugList = sug.querySelector("[data-aspect-options]");
+    var sugCount = sug.querySelector("[data-aspect-suggest-count]");
+    var sugSort = sug.querySelector("[data-aspect-sort]");
+    var sugSortLabel = sug.querySelector("[data-aspect-sort-label]");
+    var sugOption = sug.querySelector("template[data-aspect-option]");
+    var ASPECT_SORT_KEY = "heuhaufen-aspect-sort";
+    var sugState = { input: null, items: [], shown: [], active: -1, filter: "", az: false };
+
+    try {
+      sugState.az = localStorage.getItem(ASPECT_SORT_KEY) === "az";
+    } catch (error) {
+      console.info("Heuhaufen: Sortierung der Vorschläge nicht lesbar (" + error.name + ")");
+    }
 
     var aspInputs = function (row) {
       return row.querySelectorAll("input");
@@ -1364,13 +1381,118 @@
       if (aspError && aspCategories().length) aspError.hidden = true;   // Kategorie nachgetragen
     };
 
-    var aspOptions = function (list, items) {
-      list.textContent = "";
-      (items || []).forEach(function (text) {
-        var option = document.createElement("option");
-        option.value = text;
-        list.appendChild(option);
+    // Vorschläge für ein Feld: Merkmale, oder die Werte zum Merkmal derselben Zeile (Groß/klein egal)
+    var sugItemsFor = function (input) {
+      if (input.name === "aspect_name") return aspData.names || [];
+      var name = input.closest("[data-aspect-row]").querySelector("[name=aspect_name]").value.trim().toLowerCase();
+      var values = aspData.values || {};
+      var match = Object.keys(values).filter(function (k) { return k.toLowerCase() === name; })[0];
+      return match ? values[match] : [];
+    };
+
+    // Liste an die Zeile hängen: links bündig mit dem Feld, mindestens 240 px breit, nicht über die Zeile hinaus.
+    // Unter dem Feld, außer dort ist (Tastatur am Handy) zu wenig Platz und darüber mehr.
+    var sugPlace = function () {
+      var input = sugState.input;
+      if (!input || sug.hidden) return;
+      var row = input.closest("[data-aspect-row]");
+      var width = Math.min(row.clientWidth, Math.max(input.offsetWidth, 240));
+      sug.style.width = width + "px";
+      sug.style.left = Math.max(0, Math.min(input.offsetLeft, row.clientWidth - width)) + "px";
+      var view = window.visualViewport;
+      var viewTop = view ? view.offsetTop : 0;
+      var viewBottom = view ? view.offsetTop + view.height : window.innerHeight;
+      var box = input.getBoundingClientRect();
+      var below = viewBottom - box.bottom - 12;
+      var above = box.top - viewTop - 12;
+      var up = below < 200 && above > below;
+      sug.style.top = up ? "auto" : "";
+      sug.style.bottom = up ? "100%" : "";
+      sug.style.marginBottom = up ? "0.25rem" : "";
+      sug.style.maxHeight = Math.max(140, Math.min(320, up ? above : below)) + "px";
+    };
+
+    var sugClose = function () {
+      if (sugState.input) {
+        sugState.input.setAttribute("aria-expanded", "false");
+        sugState.input.removeAttribute("aria-activedescendant");
+      }
+      sugState.input = null;
+      sug.hidden = true;
+      aspBox.appendChild(sug);   // zurück an seinen Platz, damit es mit einer entfernten Zeile nicht verschwindet
+    };
+
+    var sugMark = function (index) {
+      var options = sugList.children;
+      if (!options.length) return;
+      sugState.active = Math.max(0, Math.min(options.length - 1, index));
+      Array.prototype.forEach.call(options, function (li, i) {
+        li.setAttribute("aria-selected", String(i === sugState.active));
       });
+      var current = options[sugState.active];
+      sugState.input.setAttribute("aria-activedescendant", current.id);
+      current.scrollIntoView({ block: "nearest" });
+    };
+
+    var sugRender = function () {
+      var input = sugState.input;
+      if (!input) return;
+      var all = sugState.items.slice();
+      if (sugState.az) {
+        all.sort(function (a, b) { return a[0].localeCompare(b[0], "de", { numeric: true, sensitivity: "base" }); });
+      }
+      var needle = sugState.filter.trim().toLowerCase();
+      var shown = needle ? all.filter(function (item) { return item[0].toLowerCase().indexOf(needle) !== -1; }) : all;
+      sugState.shown = shown;
+      sugState.active = -1;
+      input.removeAttribute("aria-activedescendant");
+      sugSortLabel.textContent = sugState.az ? "A–Z" : "Häufigkeit";
+      sugSort.setAttribute("aria-pressed", String(sugState.az));
+      var what = input.name === "aspect_name" ? "Merkmale" : "Werte";
+      if (aspPending && !all.length) {
+        sugCount.textContent = "Lade Vorschläge …";
+      } else if (needle) {
+        sugCount.textContent = shown.length + " von " + all.length + " " + what;
+      } else {
+        sugCount.textContent = all.length + " " + what;
+      }
+      sugList.textContent = "";
+      shown.forEach(function (item, i) {
+        var li = sugOption.content.firstElementChild.cloneNode(true);
+        li.id = "aspect-option-" + i;
+        li.dataset.value = item[0];
+        li.querySelector("[data-text]").textContent = item[0];
+        li.querySelector("[data-count]").textContent = Number(item[1]).toLocaleString("de-DE");
+        sugList.appendChild(li);
+      });
+      var open = aspPending || shown.length > 0;
+      sug.hidden = !open;
+      input.setAttribute("aria-expanded", String(open));
+      if (open) sugPlace();
+    };
+
+    var sugOpen = function (input) {
+      if (!aspCategories().length) return;
+      var row = input.closest("[data-aspect-row]");
+      if (sug.parentNode !== row) row.appendChild(sug);
+      sugState.input = input;
+      sugState.items = sugItemsFor(input);
+      sugState.filter = "";   // beim Hineinklicken alle zeigen, auch wenn schon etwas drinsteht
+      sugRender();
+    };
+
+    var sugChoose = function (value) {
+      var input = sugState.input;
+      if (!input) return;
+      input.value = value;
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
+      var row = input.closest("[data-aspect-row]");
+      var valueInput = row.querySelector("[name=aspect_value]");
+      if (input.name === "aspect_name" && !valueInput.value.trim()) {
+        valueInput.focus();   // gleich weiter zum Wert, dessen Liste öffnet sich
+      } else {
+        sugClose();
+      }
     };
 
     var aspLoad = function () {
@@ -1380,30 +1502,89 @@
       var key = cats.join(",") + "|" + q;
       if (!cats.length || key === aspLoaded) return;
       aspLoaded = key;
+      aspPending = true;
       var params = "q=" + encodeURIComponent(q) + cats.map(function (c) { return "&c=" + encodeURIComponent(c); }).join("");
       fetch("/merkmale/" + encodeURIComponent(aspBox.dataset.platform) + "?" + params, { credentials: "same-origin" })
         .then(function (response) { return response.ok ? response.json() : { names: [], values: {} }; })
         .then(function (data) {
           aspData = data;
-          aspOptions(aspNames, data.names);
         })
         .catch(function (error) {
           console.info("Merkmale:", error);
           aspLoaded = null;
+        })
+        .then(function () {
+          aspPending = false;
+          if (sugState.input) {
+            sugState.items = sugItemsFor(sugState.input);
+            sugRender();
+          }
         });
     };
 
-    aspRows.addEventListener("input", aspCheck);
-    aspRows.addEventListener("focusin", function (e) {
-      aspLoad();
-      if (e.target.name !== "aspect_value") return;
-      var name = e.target.closest("[data-aspect-row]").querySelector("[name=aspect_name]").value.trim().toLowerCase();
-      var match = Object.keys(aspData.values || {}).filter(function (k) { return k.toLowerCase() === name; })[0];
-      aspOptions(aspValues, match ? aspData.values[match] : []);
+    var isAspectInput = function (el) {
+      return el && (el.name === "aspect_name" || el.name === "aspect_value");
+    };
+
+    aspRows.addEventListener("input", function (e) {
+      aspCheck();
+      if (e.target === sugState.input) {
+        sugState.filter = e.target.value;
+        sugRender();
+      }
     });
+    aspRows.addEventListener("focusin", function (e) {
+      if (!isAspectInput(e.target)) return;
+      aspLoad();
+      sugOpen(e.target);
+    });
+    aspRows.addEventListener("focusout", function (e) {
+      if (e.target === sugState.input && !sug.contains(e.relatedTarget)) sugClose();
+    });
+    aspRows.addEventListener("keydown", function (e) {
+      if (!isAspectInput(e.target)) return;
+      var open = sugState.input === e.target && !sug.hidden;
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        if (!open) sugOpen(e.target);
+        if (!sugList.children.length) return;
+        e.preventDefault();
+        var step = e.key === "ArrowDown" ? 1 : -1;
+        sugMark(sugState.active < 0 ? (step > 0 ? 0 : sugList.children.length - 1) : sugState.active + step);
+      } else if (e.key === "Enter" && open && sugState.active >= 0) {
+        e.preventDefault();   // nicht das Formular abschicken
+        sugChoose(sugState.shown[sugState.active][0]);
+      } else if (e.key === "Escape" && open) {
+        e.preventDefault();
+        sugClose();
+      }
+    });
+    // Tippen in die Liste: Fokus bleibt im Feld (Tastatur am Handy bleibt offen), Scrollen geht weiter
+    sug.addEventListener("mousedown", function (e) { e.preventDefault(); });
+    sug.addEventListener("click", function (e) {
+      if (e.target.closest("[data-aspect-sort]")) {
+        sugState.az = !sugState.az;
+        try {
+          localStorage.setItem(ASPECT_SORT_KEY, sugState.az ? "az" : "freq");
+        } catch (error) {
+          console.info("Heuhaufen: Sortierung der Vorschläge nicht gespeichert (" + error.name + ")");
+        }
+        sugRender();
+        sugList.scrollTop = 0;
+        return;
+      }
+      var option = e.target.closest("[role=option]");
+      if (option) sugChoose(option.dataset.value);
+    });
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", sugPlace);
+      window.visualViewport.addEventListener("scroll", sugPlace);
+    }
+    window.addEventListener("resize", sugPlace);
+
     aspRows.addEventListener("click", function (e) {
       var remove = e.target.closest("[data-aspect-remove]");
       if (!remove) return;
+      sugClose();
       var row = remove.closest("[data-aspect-row]");
       if (aspRows.querySelectorAll("[data-aspect-row]").length > 1) {
         row.remove();

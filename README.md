@@ -13,7 +13,7 @@ Es nutzt die offizielle eBay Browse API und läuft als einzelner Docker-Containe
 
 - Beliebig viele Gesuche mit Suchbegriff, Ausschlusswörtern, Angebotsformat (Auktion, Sofortkauf, beides), Standort (Deutschland, EU, weltweit) und Zustand
 - Auf Wunsch nur in bestimmten eBay-Kategorien, auch in mehreren: Auswahl zum Durchklicken wie in der eBay-App, mit Suche und Vorschlägen passend zum Suchbegriff. Eine Kategorie schließt ihre Unterkategorien ein
-- Innerhalb gewählter Kategorien auch nach Artikelmerkmalen, zum Beispiel Größe M oder L und Farbe Schwarz, mit Vorschlägen für Merkmale und Werte
+- Innerhalb gewählter Kategorien auch nach Artikelmerkmalen, zum Beispiel Größe M oder L und Farbe Schwarz, mit Vorschlägen für Merkmale und Werte samt Anzahl der Angebote, sortiert nach Häufigkeit oder A–Z
 - Höchstpreis wahlweise mit oder ohne Versandkosten, Option „nur versandkostenfrei“; Preise werden mit Versand angezeigt (darunter Artikelpreis und Versand), abschaltbar
 - Es werden nur Angebote berücksichtigt, die nach Deutschland versendet werden; bei Angeboten außerhalb der EU weist die Benachrichtigung auf möglichen Zoll hin
 - Angebote nur zur Abholung: im Umkreis deiner Postleitzahl, alle mit Entfernung markiert, oder ausgeblendet. Angebote, die du im Umkreis abholen kannst, sind markiert und zählen ohne Versandkosten, auch beim Limit

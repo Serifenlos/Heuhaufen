@@ -240,8 +240,10 @@ def aspect_text(aspects_json: str) -> str:
 
 
 async def aspect_suggestions(p: Plattform, settings: dict, query: str, keys) -> dict:
-    """Merkmale und ihre häufigsten Werte in den gewählten Kategorien, für die Vorschlagslisten im Formular:
-    {"names": [...], "values": {Merkmal: [...]}}. Je Kategorie und Suchbegriff eine Abfrage, einen Tag gemerkt."""
+    """Merkmale und ihre häufigsten Werte in den gewählten Kategorien, für die Vorschlagsliste im Formular,
+    jeweils mit der Zahl der Angebote bei der Plattform, nach Häufigkeit sortiert:
+    {"names": [[Merkmal, Anzahl], …], "values": {Merkmal: [[Wert, Anzahl], …]}}. Je Kategorie und Suchbegriff
+    eine Abfrage, einen Tag gemerkt."""
     query = " ".join(query.split())[:100]
     cats = [cid for platform, cid in parse(keys) if platform == p.key][:ASPECT_CATEGORIES]
     if not cats or not p.configured(settings):
@@ -271,5 +273,5 @@ async def aspect_suggestions(p: Plattform, settings: dict, query: str, keys) -> 
                 values.setdefault(k, {})
                 values[k][v] = values[k].get(v, 0) + n
     names = sorted(counts, key=lambda k: -counts[k])[:60]
-    return {"names": [spelled[k] for k in names],
-            "values": {spelled[k]: [v for v, _ in sorted(values[k].items(), key=lambda x: -x[1])][:50] for k in names}}
+    return {"names": [[spelled[k], counts[k]] for k in names],
+            "values": {spelled[k]: [[v, n] for v, n in sorted(values[k].items(), key=lambda x: -x[1])][:50] for k in names}}

@@ -55,35 +55,52 @@
   </div>
 
   {# Artikelmerkmale (Issue #12): freie Paare aus Merkmal und Wert. Ist das letzte Paar ausgefüllt, kommt ein
-     neues dazu (app.js „Artikelmerkmale“). Vorschläge aus den gewählten Kategorien über /merkmale/… #}
+     neues dazu (app.js „Artikelmerkmale“). Vorschläge aus den gewählten Kategorien über /merkmale/… in einer
+     eigenen Liste unter dem Feld (Issue #16), oben darin der Schalter Häufigkeit ⇄ A–Z. #}
   {% set aspect_input = ui.input() ~ " min-w-0" %}
   <div class="grid min-w-0 gap-2" data-aspects data-platform="{{ category_platform.key }}">
     <div class="flex items-center gap-1"><span class="{{ ui.label() }}" id="aspects-label">Nur mit diesen Artikelmerkmalen <span class="font-normal text-muted">optional</span></span>{{ ui.info('aspects') }}</div>
     <div class="grid gap-2" data-aspect-rows aria-labelledby="aspects-label">
       {% for name, value in values.aspect_rows + [('', '')] %}
-      <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2" data-aspect-row>
-        <input class="{{ aspect_input }}" name="aspect_name" value="{{ name }}" placeholder="Merkmal" aria-label="Merkmal" autocomplete="off" list="aspect-names" {% if errors.aspects and (not name) != (not value) %}aria-invalid="true"{% endif %}>
-        <input class="{{ aspect_input }}" name="aspect_value" value="{{ value }}" placeholder="Wert" aria-label="Wert" autocomplete="off" list="aspect-values" {% if errors.aspects and (not name) != (not value) %}aria-invalid="true"{% endif %}>
+      <div class="relative grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2" data-aspect-row>
+        <input class="{{ aspect_input }}" name="aspect_name" value="{{ name }}" placeholder="Merkmal" aria-label="Merkmal" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="aspect-suggest" {% if errors.aspects and (not name) != (not value) %}aria-invalid="true"{% endif %}>
+        <input class="{{ aspect_input }}" name="aspect_value" value="{{ value }}" placeholder="Wert" aria-label="Wert" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="aspect-suggest" {% if errors.aspects and (not name) != (not value) %}aria-invalid="true"{% endif %}>
         <button type="button" class="{{ ui.icon_button() }} text-xl leading-none" data-aspect-remove aria-label="Merkmal entfernen">×</button>
       </div>
       {% endfor %}
     </div>
     <template data-aspect-template>
-      <div class="grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2" data-aspect-row>
-        <input class="{{ aspect_input }}" name="aspect_name" value="" placeholder="Merkmal" aria-label="Merkmal" autocomplete="off" list="aspect-names">
-        <input class="{{ aspect_input }}" name="aspect_value" value="" placeholder="Wert" aria-label="Wert" autocomplete="off" list="aspect-values">
+      <div class="relative grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-2" data-aspect-row>
+        <input class="{{ aspect_input }}" name="aspect_name" value="" placeholder="Merkmal" aria-label="Merkmal" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="aspect-suggest">
+        <input class="{{ aspect_input }}" name="aspect_value" value="" placeholder="Wert" aria-label="Wert" autocomplete="off" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="aspect-suggest">
         <button type="button" class="{{ ui.icon_button() }} text-xl leading-none" data-aspect-remove aria-label="Merkmal entfernen">×</button>
       </div>
     </template>
-    <datalist id="aspect-names"></datalist>
-    <datalist id="aspect-values"></datalist>
+    {# Vorschlagsliste: app.js hängt sie an die Zeile mit dem Feld, in dem man gerade ist #}
+    <div class="absolute top-full z-20 mt-1 flex flex-col overflow-hidden rounded-xl border border-line bg-surface shadow-xl" data-aspect-suggest hidden>
+      <div class="flex flex-none items-center justify-between gap-3 border-b border-line py-1 pr-1 pl-3 text-meta text-muted">
+        <span class="min-w-0 truncate" data-aspect-suggest-count></span>
+        <button type="button" class="inline-flex min-h-8 flex-none cursor-pointer items-center gap-1.5 rounded-full px-2.5 font-medium text-ink-2 hover:bg-tile" data-aspect-sort aria-pressed="false" title="Sortierung umschalten">
+          <svg class="size-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M3.5 16.5 7 20l3.5-3.5M17 20V4m-3.5 3.5L17 4l3.5 3.5"/></svg>
+          <span data-aspect-sort-label>Häufigkeit</span>
+        </button>
+      </div>
+      <ul class="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1" role="listbox" id="aspect-suggest" aria-label="Vorschläge" data-aspect-options></ul>
+      <template data-aspect-option>
+        <li class="flex cursor-pointer items-baseline justify-between gap-3 px-3 py-2 text-ui hover:bg-tile aria-selected:bg-tile" role="option" aria-selected="false">
+          <span class="min-w-0 truncate" data-text></span><span class="flex-none font-num text-meta text-muted" data-count></span>
+        </li>
+      </template>
+    </div>
     {% if errors.aspects %}<p class="{{ ui.hint('warn') }} font-medium text-over" id="aspects-error" role="alert">{{ errors.aspects }}</p>{% endif %}
     <p class="{{ ui.hint('warn') }}" data-aspect-needs-category {% if chosen or not values.aspect_rows or errors.aspects %}hidden{% endif %}>Artikelmerkmale gehen nur zusammen mit einer Kategorie, so verlangt es {{ category_platform.name }}.</p>
     {{ ui.info_panel('aspects', 'Artikelmerkmale', [
          'So, wie es bei ' ~ category_platform.name ~ ' unter „Artikelmerkmale“ steht, zum Beispiel Größe und M.',
          'Gleiches Merkmal mehrmals: einer der Werte reicht (Größe M oder L).',
          'Verschiedene Merkmale müssen alle passen.',
-         'Geht nur mit gewählter Kategorie. Dann schlägt das Feld passende Merkmale und Werte vor.']) }}
+         'Geht nur mit gewählter Kategorie. Dann schlägt das Feld passende Merkmale und Werte vor.',
+         'Die Zahl in der Vorschlagsliste: so viele Angebote gibt es bei ' ~ category_platform.name ~ ' damit, zum Suchbegriff.',
+         'Oben in der Liste sortiert ein Schalter nach Häufigkeit oder A–Z.']) }}
   </div>
   {% endif %}
 
