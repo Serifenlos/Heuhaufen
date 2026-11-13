@@ -202,6 +202,7 @@ class Watcher:
         radius = db.setting_int(settings, "radius_km", 50)
         result = await p.find(s, settings, now)
         keep_pickup = result.keep_pickup
+        db.ex("UPDATE searches SET capped = ? WHERE id = ?", (int(result.capped), s["id"]))   # Hinweis auf der Gesuch-Seite
 
         excluded = util.exclusion_words(s["exclude"])
         hidden = db.hidden_ids(s["id"])   # von Hand ausgeblendet: weiter aktualisieren, aber nie melden
@@ -395,7 +396,7 @@ class Watcher:
                 f"?s={signed.sign('erinnern', s['id'], item_id)}")
 
     def _reminder_push(self, s: dict, v: dict, settings: dict) -> dict:
-        name = util.short(s["name"] or s["query"], 40)
+        name = util.short(util.search_title(s), 40)
         bids = v["bid_count"] or 0
         price = f"{self._price_line(v, 'Aktuell', settings)}, {bids} {'Gebot' if bids == 1 else 'Gebote'}"
         if not v["within"]:
@@ -438,7 +439,7 @@ class Watcher:
         for s, settings in searches:   # höchstens eine Gesuch-Suche pro Durchgang, nur wenn es Angebote gibt
             key = market.search_key(s["id"])
             has_items = db.q1("SELECT 1 AS x FROM items WHERE search_id = ? AND status = 'active' LIMIT 1", (s["id"],))
-            if has_items and market.due(key):
+            if has_items and s["query"] and market.due(key):   # ohne Suchbegriff (nur Kategorie): nichts zu vergleichen
                 await self._fetch_market(self._market_platform(s, settings), key, settings, s["exclude"], s=s)
                 return
 
@@ -504,7 +505,7 @@ class Watcher:
         if not views:
             return
         if notify.configured(settings):
-            name = s["name"] or s["query"]
+            name = util.search_title(s)
             try:
                 if len(views) > 1 and (not s["initialized"] or len(views) > MAX_SINGLE_PUSHES):
                     cheapest = min(views, key=lambda v: v["total"] or 0)
@@ -599,7 +600,7 @@ class Watcher:
             *v["flags"],
         ]
         return {
-            "title": f"Noch {minutes} Min: {util.short(s['name'] or s['query'], 40)}",
+            "title": f"Noch {minutes} Min: {util.short(util.search_title(s), 40)}",
             "message": "\n".join(lines),
             "click": v["url"],
             "image": self._image(settings, s, v),
@@ -612,7 +613,7 @@ class Watcher:
         lines = [util.short(v["title"], 120), *self._condition_line(v), self._price_line(v, "Preis", settings),
                  *self._market_line(s, v, settings), util.limit_text(s), *v["flags"]]
         return {
-            "title": f"Sofortkauf unter Limit: {util.short(s['name'] or s['query'], 40)}",
+            "title": f"Sofortkauf unter Limit: {util.short(util.search_title(s), 40)}",
             "message": "\n".join(lines),
             "click": v["url"],
             "image": self._image(settings, s, v),

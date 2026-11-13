@@ -274,6 +274,17 @@ def ending_first(v: dict) -> tuple:
 NEW_FOR = 86400   # „neu“ auf der Übersicht: in den letzten 24 Stunden gefunden
 
 
+def search_title(search: dict) -> str:
+    """Name eines Gesuchs: eigener Name, sonst Suchbegriff. Ohne Suchbegriff (nur Kategorie, Issue #15) die
+    Kategorien und Merkmale, z. B. „Herren: Größe L“."""
+    if search.get("name") or search.get("query"):
+        return search.get("name") or search.get("query")
+    from . import kategorien   # erst hier: kategorien braucht die Datenbank
+    title = ", ".join(kategorien.names(search.get("categories") or "")) or "Gesuch"
+    aspects = kategorien.aspect_text(search.get("aspects") or "")
+    return f"{title}: {aspects}" if aspects else title
+
+
 def search_overview(search: dict, items: list[dict], now: float, hidden: set[str] | None = None) -> dict:
     hidden = hidden or set()
     views = [
@@ -288,7 +299,7 @@ def search_overview(search: dict, items: list[dict], now: float, hidden: set[str
     feature = auctions[0] if auctions else (fixed[0] if fixed else None)
     return {
         **search,
-        "title": search["name"] or search["query"],
+        "title": search_title(search),
         "description": describe_search(search),
         "limit": limit_text(search),
         "matches": sorted(within, key=ending_first),
@@ -298,7 +309,7 @@ def search_overview(search: dict, items: list[dict], now: float, hidden: set[str
         "feature": feature,
         "count": len(within),
         "new_count": sum(1 for v in within if (v.get("first_seen") or 0) > now - NEW_FOR),
-        "initial": (search["name"] or search["query"] or "?").strip()[:1].upper(),
+        "initial": (search_title(search) or "?").strip()[:1].upper(),
     }
 
 

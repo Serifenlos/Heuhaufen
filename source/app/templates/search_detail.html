@@ -25,6 +25,8 @@
 </section>
 
 {% if s.last_error %}<p class="{{ ui.notice('error') }} my-3.5">{{ s.last_error }}</p>{% endif %}
+{# Issue #15: eBay hatte beim letzten Suchlauf mehr Treffer, als die Grenze des Gesuchs zulässt #}
+{% if s.capped and not s.last_error %}<p class="{{ ui.notice() }} my-3.5" data-capped>Bei eBay gibt es mehr als {{ '{:,}'.format(results_max).replace(',', '.') }} Treffer. Heuhaufen sieht sich davon die ersten an: Auktionen, die zuerst enden, und die neuesten Sofortkäufe. <a class="font-medium whitespace-nowrap" href="/searches/{{ s.id }}/edit">Grenze oder Suche ändern</a></p>{% endif %}
 
 <section class="mt-12" id="treffer" data-list="matches">
   <div class="mb-2 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">

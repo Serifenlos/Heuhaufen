@@ -19,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 
 from . import auth, config, db, details, images, kategorien, market, notify, signed, util
 from .plattformen import liste as plattformen
-from .plattformen.basis import PURPOSES, PlatformError
+from .plattformen.basis import PURPOSES, RESULT_STEPS, PlatformError, result_limit
 from .watcher import Watcher
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -565,13 +565,14 @@ def _form_defaults(settings: dict) -> dict:
         "max_price_raw": "", "incl_shipping": 1, "free_shipping_only": 0, "condition": "any",
         "lead_raw": str(db.setting_int(settings, "lead_minutes", 10)), "interval_raw": "",
         "pickup_mode": "radius", "active": 1, "categories": "", "aspects": "", "aspect_rows": [],
+        "max_results": result_limit({}, settings),
     }
 
 
-def _values_from_search(s: dict) -> dict:
+def _values_from_search(s: dict, settings: dict | None = None) -> dict:
     price = s["max_price"]
     raw = f"{price:.0f}" if float(price).is_integer() else f"{price:.2f}".replace(".", ",")
-    return {**s, "max_price_raw": raw, "lead_raw": str(s["lead_minutes"]),
+    return {**s, "max_price_raw": raw, "lead_raw": str(s["lead_minutes"]), "max_results": result_limit(s, settings or {}),
             "interval_raw": str(s["interval_minutes"] or ""), "aspect_rows": kategorien.aspect_rows(s.get("aspects") or "")}
 
 
@@ -595,12 +596,21 @@ def _parse_search_form(form) -> tuple[dict, dict]:
         "lead_raw": str(form.get("lead_minutes", "")).strip()[:5],
         "interval_raw": str(form.get("interval_minutes", "")).strip()[:5],
         "categories": kategorien.normalize(form.getlist("category")[:50]),
+        "max_results": int(pick("max_results", [str(n) for n in RESULT_STEPS], str(RESULT_STEPS[1]))),
     }
     v["aspects"], v["aspect_rows"], aspect_error = kategorien.parse_aspects(form.getlist("aspect_name")[:30],
                                                                             form.getlist("aspect_value")[:30])
     errors = {}
-    if len(v["query"]) < 2:
+    # Ohne Suchbegriff geht es mit Kategorie (Issue #15), aber nicht in einer Hauptkategorie: Da verlangt eBay
+    # einen Suchbegriff (Fehler 12013).
+    top = [c for c in kategorien.lookup(v["categories"]) if c["known"] and c.get("level") == 1]
+    if v["query"] and len(v["query"]) < 2:
         errors["query"] = "Gib mindestens zwei Zeichen ein."
+    elif not v["query"] and not v["categories"]:
+        errors["query"] = "Gib einen Suchbegriff ein oder wähle unten eine Kategorie."
+    elif not v["query"] and top:
+        errors["query"] = (f"„{top[0]['name']}“ ist eine Hauptkategorie, dort verlangt eBay einen Suchbegriff. "
+                           "Gib einen ein oder wähle eine Unterkategorie.")
     if aspect_error:
         errors["aspects"] = aspect_error
     elif v["aspects"] and not v["categories"]:
@@ -626,7 +636,7 @@ def _parse_search_form(form) -> tuple[dict, dict]:
 
 SEARCH_COLUMNS = ["name", "query", "exclude", "format", "location", "max_price", "incl_shipping",
                   "free_shipping_only", "condition", "lead_minutes", "interval_minutes", "pickup_mode", "active",
-                  "categories", "aspects"]
+                  "categories", "aspects", "max_results"]
 
 
 def _render_form(request: Request, values: dict, errors: dict, mode: str, sid: int | None = None,
@@ -639,7 +649,7 @@ def _render_form(request: Request, values: dict, errors: dict, mode: str, sid: i
                   radius=db.setting_int(settings, "radius_km", 50),
                   interval_default=db.setting_int(settings, "interval_minutes", 15),
                   chosen=kategorien.lookup(values.get("categories", "")), category_platform=category_platform,
-                  categories_max=kategorien.MAX_PER_SEARCH, aspects_max=kategorien.MAX_ASPECTS)
+                  categories_max=kategorien.MAX_PER_SEARCH, aspects_max=kategorien.MAX_ASPECTS, result_steps=RESULT_STEPS)
 
 
 @app.get("/searches/new", response_class=HTMLResponse)
@@ -678,6 +688,7 @@ async def search_detail(request: Request, sid: int):
     show = request.query_params.get("show")
     hidden = _hidden_views(s, now) if show == "hidden" else []
     return render(request, "search_detail.html", active="searches", s=overview, now=now,
+                  results_max=result_limit(overview, settings),
                   show=show, hidden=hidden, category_names=kategorien.names(s.get("categories")),
                   aspect_text=kategorien.aspect_text(s.get("aspects") or ""))
 
@@ -734,7 +745,7 @@ async def edit_search_page(request: Request, sid: int):
     s = db.q1("SELECT * FROM searches WHERE id = ?", (sid,))
     if not s:
         return not_found(request)
-    return _render_form(request, _values_from_search(s), {}, "edit", sid)
+    return _render_form(request, _values_from_search(s, user_settings(request)), {}, "edit", sid)
 
 
 @app.post("/searches/{sid}/edit")
@@ -869,7 +880,7 @@ def _settings_page(request: Request, errors: dict | None = None, values: dict | 
                   image_cache=images.stats() if user["role"] == "admin" else None,   # Cache: für alle gemeinsam
                   category_trees=[(p, kategorien.status(p.key)) for p in plattformen.ALL.values() if p.categories]
                   if user["role"] == "admin" else [],
-                  market_lookups_today=market.lookups_today(user["id"]))
+                  market_lookups_today=market.lookups_today(user["id"]), result_steps=RESULT_STEPS)
 
 
 def _platform_panels(settings: dict) -> list[dict]:
@@ -899,7 +910,7 @@ async def settings_page(request: Request):
 async def save_general(request: Request):
     form = await checked_form(request)
     admin = request.state.user["role"] == "admin"
-    keys = ("radius_km", "lead_minutes", "interval_minutes") + (("app_url",) if admin else ())   # Adresse: nur Admin
+    keys = ("radius_km", "lead_minutes", "interval_minutes", "max_results") + (("app_url",) if admin else ())   # Adresse: nur Admin
     values = {k: str(form.get(k, "")).strip() for k in keys}
     values["plz"] = str(form.get("mittelpunkt", "")).strip()   # Feldname ohne „plz“, siehe settings.html
     errors = {}
@@ -908,6 +919,8 @@ async def save_general(request: Request):
     for key, lo, hi in (("radius_km", 1, 500), ("lead_minutes", 1, 180), ("interval_minutes", 5, 240)):
         if not values[key].isdigit() or not lo <= int(values[key]) <= hi:
             errors[key] = f"Wähle eine Zahl von {lo} bis {hi}."
+    if values["max_results"] not in [str(n) for n in RESULT_STEPS]:
+        values["max_results"] = str(result_limit({}, user_settings(request)))
     if values.get("app_url") and not values["app_url"].startswith(("http://", "https://")):
         errors["app_url"] = "Die Adresse beginnt mit http:// oder https://."
     if errors:

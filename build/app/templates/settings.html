@@ -63,6 +63,14 @@
              'Ein eigenes Intervall pro Gesuch geht unter „Weitere Optionen“.']) }}
       </div>
     </div>
+    <fieldset class="grid min-w-0 gap-2">
+      <legend class="{{ ui.label() }} mb-2">Treffer je Suchlauf höchstens {{ ui.info('max_results') }}</legend>
+      {{ ui.segmented('max_results', [('200', '200'), ('600', '600'), ('1000', '1.000')], s.max_results|string) }}
+      {{ ui.info_panel('max_results', 'Treffer je Suchlauf', [
+           'Vorgabe für neue Gesuche, jedes Gesuch kann eine eigene Grenze haben.',
+           'Je 200 Treffer eine eBay-Abfrage pro Suchlauf, je Angebotsformat und Kategorie.',
+           'Gibt es mehr, zählen die vorne: Auktionen, die zuerst enden, und die neuesten Sofortkäufe.']) }}
+    </fieldset>
     {# Gilt für die ganze Installation (alle Konten, Einladungslinks), deshalb nur für den Admin #}
     {% if is_admin %}
     <div class="grid min-w-0 gap-2">

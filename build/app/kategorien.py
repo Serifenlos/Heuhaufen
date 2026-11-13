@@ -29,6 +29,8 @@ MAX_PER_SEARCH = 10              # Kategorien je Gesuch (jede kostet pro Suchlau
 SEP = " › "
 
 ASPECT_CATEGORIES = MAX_PER_SEARCH   # Merkmal-Vorschläge aus allen gewählten Kategorien (je eine Abfrage, einen Tag gemerkt)
+CHILD_ASPECTS = 8                # bei einer Oberkategorie zusätzlich Merkmale aus so vielen Unterkategorien (Issue #15)
+ASPECT_CALLS = 30                # Abfragen für Merkmal-Vorschläge je Aufruf höchstens
 
 _lock = asyncio.Lock()
 _suggested: dict[tuple[str, str], tuple[float, list[str]]] = {}
@@ -254,38 +256,57 @@ def aspect_text(aspects_json: str) -> str:
 
 
 async def aspect_suggestions(p: Plattform, settings: dict, query: str, keys) -> dict:
-    """Merkmale und ihre häufigsten Werte in den gewählten Kategorien, für die Vorschlagsliste im Formular,
-    jeweils mit der Zahl der Angebote bei der Plattform, nach Häufigkeit sortiert:
-    {"names": [[Merkmal, Anzahl], …], "values": {Merkmal: [[Wert, Anzahl], …]}}. Je Kategorie und Suchbegriff
-    eine Abfrage, einen Tag gemerkt."""
+    """Merkmale und ihre Werte in den gewählten Kategorien, für die Vorschlagsliste im Formular, jeweils mit
+    der Zahl der Angebote bei der Plattform, nach Häufigkeit sortiert:
+    {"names": [[Merkmal, Anzahl], …], "values": {Merkmal: [[Wert, Anzahl], …]}}.
+    eBay nennt je Abfrage nur die Merkmale der häufigsten Unterkategorie. Bei einer Oberkategorie (Issue #15,
+    z. B. „Herren“) fragt Heuhaufen deshalb auch ihre Unterkategorien (höchstens CHILD_ASPECTS) und nimmt alles
+    zusammen; innerhalb einer gewählten Kategorie zählt je Wert die höchste Zahl (die Oberkategorie enthält
+    die Unterkategorien schon), über mehrere gewählte Kategorien werden die Zahlen addiert.
+    Je Kategorie und Suchbegriff eine Abfrage, einen Tag gemerkt, zusammen höchstens ASPECT_CALLS."""
     query = " ".join(query.split())[:100]
     cats = [cid for platform, cid in parse(keys) if platform == p.key][:ASPECT_CATEGORIES]
     if not cats or not p.configured(settings):
         return {"names": [], "values": {}}
-    counts: dict[str, int] = {}
+    groups: list[list[str]] = []
+    budget = ASPECT_CALLS
+    for cid in cats:
+        row = get(p.key, cid)
+        group = [cid]
+        if row and not row["leaf"]:
+            group += [c["id"] for c in children(p.key, cid)[:CHILD_ASPECTS]]
+        group = group[:max(1, budget)]
+        budget -= len(group)
+        groups.append(group)
     spelled: dict[str, str] = {}
     values: dict[str, dict[str, int]] = {}
-    for cid in cats:
-        key = (p.key, cid, query.casefold())
-        cached = _aspects.get(key)
-        if cached and time.time() - cached[0] < SUGGEST_FOR:
-            found = cached[1]
-        else:
-            try:
-                found = await p.aspect_suggestions(settings, query, cid)
-            except Exception as e:   # Vorschläge sind ein Extra
-                log.info("Merkmal-Vorschläge für Kategorie %s: %s", cid, e)
-                continue
-            if len(_aspects) > 500:
-                _aspects.clear()
-            _aspects[key] = (time.time(), found)
-        for name, vals in found:
-            k = name.casefold()
-            spelled.setdefault(k, name)
-            counts[k] = counts.get(k, 0) + sum(n for _, n in vals)
-            for v, n in vals:
+    for group in groups:
+        best: dict[str, dict[str, int]] = {}   # innerhalb der gewählten Kategorie: höchste Zahl je Wert
+        for cid in group:
+            key = (p.key, cid, query.casefold())
+            cached = _aspects.get(key)
+            if cached and time.time() - cached[0] < SUGGEST_FOR:
+                found = cached[1]
+            else:
+                try:
+                    found = await p.aspect_suggestions(settings, query, cid)
+                except Exception as e:   # Vorschläge sind ein Extra
+                    log.info("Merkmal-Vorschläge für Kategorie %s: %s", cid, e)
+                    continue
+                if len(_aspects) > 500:
+                    _aspects.clear()
+                _aspects[key] = (time.time(), found)
+            for name, vals in found:
+                k = name.casefold()
+                spelled.setdefault(k, name)
+                for v, n in vals:
+                    seen = best.setdefault(k, {})
+                    seen[v] = max(seen.get(v, 0), n)
+        for k, vals in best.items():   # über die gewählten Kategorien: addieren
+            for v, n in vals.items():
                 values.setdefault(k, {})
                 values[k][v] = values[k].get(v, 0) + n
+    counts = {k: sum(vals.values()) for k, vals in values.items()}
     # alles, was die Plattform liefert, ohne Kürzung (Issue #16: auch seltene Marken); die Liste filtert beim Tippen
     names = sorted(counts, key=lambda k: -counts[k])
     return {"names": [[spelled[k], counts[k]] for k in names],

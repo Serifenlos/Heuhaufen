@@ -39,6 +39,22 @@ DETAIL_FIELDS = ("description_html", "condition_note", "aspects", "bidders", "mi
 CATEGORY_FIELDS = ("id", "parent", "name", "level", "leaf", "position")
 
 
+RESULT_STEPS = (200, 600, 1000)   # Treffer je Suchlauf höchstens, zur Wahl im Gesuch (Issue #15)
+RESULT_DEFAULT = 600              # so viel holte Heuhaufen vor Issue #15 immer (drei Seiten bei eBay)
+
+
+def result_limit(s: dict, settings: dict) -> int:
+    """Wie viele Treffer ein Suchlauf höchstens holt: aus dem Gesuch, sonst aus den Einstellungen."""
+    for value in (s.get("max_results"), settings.get("max_results")):
+        try:
+            n = int(value)
+        except (TypeError, ValueError):
+            continue
+        if n in RESULT_STEPS:
+            return n
+    return RESULT_DEFAULT
+
+
 def search_categories(s: dict, platform: str) -> list[str]:
     """Kategorien eines Gesuchs auf einer Plattform: searches.categories „ebay:58058,ebay:175672“ → ["58058", …]."""
     out = []
@@ -88,9 +104,11 @@ class Credential:
 class Found:
     """Ergebnis einer Suche nach neuen Angeboten.
     items: Angebotsnummer → (Angebot, aus der Abholsuche?)
-    keep_pickup: diesmal gab es keine Abholsuche; Abholangebote der letzten gelten weiter."""
+    keep_pickup: diesmal gab es keine Abholsuche; Abholangebote der letzten gelten weiter.
+    capped: die Plattform hatte mehr Treffer, als die Grenze des Gesuchs zulässt (Issue #15)."""
     items: dict
     keep_pickup: bool = False
+    capped: bool = False
 
 
 class Plattform:

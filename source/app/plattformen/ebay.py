@@ -24,7 +24,8 @@ from datetime import datetime
 import httpx
 
 from .. import config, db, geheim
-from .basis import Credential, Found, Plattform, PlatformError, Results, search_aspects, search_categories
+from .basis import (Credential, Found, Plattform, PlatformError, Results, result_limit, search_aspects,
+                    search_categories)
 
 log = logging.getLogger("heuhaufen.ebay")
 
@@ -142,6 +143,9 @@ class EbayClient:
             if r.status_code != 200:
                 raise EbayError(_error_text(r))
             data = r.json()
+            ignored = _aspects_ignored(data, params)
+            if ignored:
+                raise EbayError(ignored)
             batch = data.get("itemSummaries") or []
             items.extend(batch)
             offset += len(batch)
@@ -344,6 +348,21 @@ def parse_detail(d: dict) -> dict:
     }
 
 
+def _aspects_ignored(data: dict, params: dict) -> str | None:
+    """Wendet eBay einen Merkmal-Filter nicht an (etwa in einer Kategorie, in der es das Merkmal nicht gibt),
+    meldet es das nur als Warnung (z. B. errorId 12017) und liefert alle Angebote der Kategorie. Dann lieber
+    als Fehler melden, sonst kämen Treffer, die gar nicht passen."""
+    if "aspect_filter" not in params:
+        return None
+    for w in data.get("warnings") or []:
+        message = str(w.get("message") or "")
+        if w.get("errorId") == 12017 or "aspect" in message.lower():
+            hint = f" (eBay: {message[:160]})" if message else ""
+            return ("eBay hat die Artikelmerkmale nicht angewendet" + hint +
+                    ". Wähle eine tiefere Kategorie oder prüfe die Schreibweise der Merkmale.")
+    return None
+
+
 def aspect_filter(category: str | None, aspects: list[dict]) -> str | None:
     """Filter für Artikelmerkmale, z. B. „categoryId:57988,Größe:{M|L},Farbe:{Schwarz}“. eBay nimmt ihn nur
     zusammen mit einer Kategorie an (dieselbe Nummer auch in category_ids). | im Wert schützt ein \\,
@@ -475,8 +494,9 @@ class EbayPlattform(Plattform):
         return params
 
     async def _search_shipped(self, client: EbayClient, s: dict, formats: list[str], plz: str,
-                              now: float, category: str | None = None) -> list[dict]:
-        """Angebote mit Versand nach Deutschland (Strategie siehe oben)."""
+                              now: float, category: str | None = None, pages: int = 3) -> tuple[list[dict], bool]:
+        """Angebote mit Versand nach Deutschland (Strategie siehe oben), höchstens pages Seiten je Format.
+        Dazu, ob eBay mehr Treffer hatte (Grenze des Gesuchs erreicht)."""
         def filters(fmts: list[str]) -> list[str]:
             f = self._base_filters(s) + [
                 self._location_filter(s),
@@ -490,16 +510,20 @@ class EbayPlattform(Plattform):
         extra = self._category_params(s, category)
         split = (s["id"], category)
         found: list[dict] = []
+        capped = False
         if len(formats) > 1 and now >= self._split_until.get(split, 0):
-            together = await client.search(s["query"], filters(formats), None, plz, max_pages=1, extra=extra)
+            together = await client.search(s["query"] or None, filters(formats), None, plz, max_pages=1, extra=extra)
             if getattr(together, "complete", True):
-                return list(together)
+                return list(together), False
             self._split_until[split] = now + SPLIT_FOR   # zu viele Treffer: eine Weile gleich getrennt
             found.extend(together)
         for fmt in formats:
+            # Bei mehr Treffern als der Grenze zählen die vorne: Auktionen, die zuerst enden, neueste Sofortkäufe
             sort = "endingSoonest" if fmt == "AUCTION" else "newlyListed"
-            found.extend(await client.search(s["query"], filters([fmt]), sort, plz, extra=extra))
-        return found
+            got = await client.search(s["query"] or None, filters([fmt]), sort, plz, max_pages=pages, extra=extra)
+            capped = capped or not getattr(got, "complete", True)
+            found.extend(got)
+        return found, capped
 
     async def find(self, s: dict, settings: dict, now: float) -> Found:
         client, plz = self._client(settings), self._plz(settings)
@@ -511,9 +535,13 @@ class EbayPlattform(Plattform):
         # eBay nimmt je Abfrage nur eine Kategorie: mehrere Kategorien = je Kategorie eine eigene Suche.
         # Eine Kategorie schließt ihre Unterkategorien ein.
         categories: list[str | None] = search_categories(s, self.key) or [None]
+        pages = max(1, result_limit(s, settings) // PAGE_SIZE)   # Treffergrenze des Gesuchs (Issue #15)
         found: dict[str, tuple[dict, bool]] = {}
+        capped = False
         for category in categories:
-            for summary in await self._search_shipped(client, s, formats, plz, now, category):
+            shipped, more = await self._search_shipped(client, s, formats, plz, now, category, pages)
+            capped = capped or more
+            for summary in shipped:
                 if summary.get("itemId"):
                     found[summary["itemId"]] = (summary, False)
         if pickup_now:
@@ -528,11 +556,13 @@ class EbayPlattform(Plattform):
             ]
             for category in categories:
                 extra = self._category_params(s, category)
-                for summary in await client.search(s["query"], filters, None, plz, extra=extra):
+                got = await client.search(s["query"] or None, filters, None, plz, max_pages=pages, extra=extra)
+                capped = capped or not getattr(got, "complete", True)
+                for summary in got:
                     if summary.get("itemId"):   # auch Angebote mit Versand: so kennt Heuhaufen die Entfernung
                         found[summary["itemId"]] = (summary, True)
             self._pickup_runs[s["id"]] = now
-        return Found(found, keep_pickup=pickup_wanted and not pickup_now)
+        return Found(found, keep_pickup=pickup_wanted and not pickup_now, capped=capped)
 
     async def fetch(self, item_id: str, settings: dict, purpose: str,
                     pickup: bool = False) -> tuple[dict, dict | None] | None:
@@ -543,6 +573,8 @@ class EbayPlattform(Plattform):
 
     async def compare(self, settings: dict, s: dict | None = None, query: str | None = None,
                       catalog: str | None = None) -> tuple[list[dict], bool]:
+        if s is not None and not s["query"]:
+            return [], True   # ohne Suchbegriff (nur Kategorie, Issue #15) gibt es nichts Vergleichbares
         client, plz = self._client(settings), self._plz(settings)
         if s is not None:
             # wie die Suche des Gesuchs, aber nur Sofortkauf und ohne Höchstpreis

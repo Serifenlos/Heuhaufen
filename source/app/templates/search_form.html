@@ -17,6 +17,7 @@
     {# Suchoperatoren (Issue #18): nur, was die Browse API laut eBay versteht #}
     {% call ui.info_panel('query', 'Suchbegriff') %}
     <li>So, wie du es bei eBay ins Suchfeld tippen würdest.</li>
+    <li>Leer lassen geht, wenn du unten eine Kategorie wählst: Dann kommt alles aus der Kategorie, gern mit Artikelmerkmalen. Nicht bei einer Hauptkategorie wie „Kleidung &amp; Accessoires“, dort verlangt eBay einen Suchbegriff.</li>
     <li>Leerzeichen: alle Wörter müssen vorkommen, <code class="{{ ui.code() }}">leica m6</code></li>
     <li>Klammern mit Komma: eines der Wörter reicht, <code class="{{ ui.code() }}">leica (m6, m7)</code></li>
     <li>Platzhalter wie <code class="{{ ui.code() }}">*</code> gehen nicht.</li>
@@ -208,8 +209,19 @@
     </div>
     <div class="mt-5 grid min-w-0 gap-2">
       <label class="{{ ui.label() }}" for="name">Eigener Name</label>
-      <input class="{{ ui.input() }}" id="name" name="name" value="{{ values.name }}" placeholder="Leer lassen, dann gilt der Suchbegriff" autocomplete="off">
+      <input class="{{ ui.input() }}" id="name" name="name" value="{{ values.name }}" placeholder="Leer lassen: Suchbegriff oder Kategorie" autocomplete="off">
     </div>
+    {# Treffergrenze (Issue #15): je 200 eine Abfrage bei eBay, Vorgabe aus den Einstellungen #}
+    <fieldset class="mt-5 grid min-w-0 gap-2">
+      <legend class="{{ ui.label() }} mb-2">Treffer je Suchlauf höchstens {{ ui.info('max_results') }}</legend>
+      {{ ui.segmented('max_results', [('200', '200'), ('600', '600'), ('1000', '1.000')], values.max_results|string) }}
+      {{ ui.info_panel('max_results', 'Treffer je Suchlauf', [
+           'So viele Angebote holt ein Suchlauf höchstens, je Angebotsformat und Kategorie.',
+           'Je 200 Treffer eine eBay-Abfrage.',
+           'Gibt es mehr, zählen die vorne: Auktionen, die zuerst enden, und die neuesten Sofortkäufe.',
+           'Wichtig bei Suchen nur in einer Kategorie ohne Suchbegriff.',
+           'Die Vorgabe für neue Gesuche steht in den Einstellungen.']) }}
+    </fieldset>
   </details>
 
   <div class="grid border-t border-line">

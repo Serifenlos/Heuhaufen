@@ -86,6 +86,8 @@ CREATE TABLE IF NOT EXISTS searches (
     platforms           TEXT NOT NULL DEFAULT 'ebay',      -- Plattformen, durch Komma getrennt (plattformen/)
     categories          TEXT NOT NULL DEFAULT '',          -- nur in diesen Kategorien: ebay:58058,ebay:175672
     aspects             TEXT NOT NULL DEFAULT '',          -- Artikelmerkmale als JSON: [{"name": "Größe", "values": ["M"]}]
+    max_results         INTEGER,                           -- Treffer je Suchlauf höchstens (200/600/1000), leer: Einstellung
+    capped              INTEGER NOT NULL DEFAULT 0,        -- letzter Suchlauf: eBay hatte mehr Treffer als die Grenze
     user_id             INTEGER REFERENCES users(id) ON DELETE CASCADE,   -- wem das Gesuch gehört
     active              INTEGER NOT NULL DEFAULT 1,
     initialized         INTEGER NOT NULL DEFAULT 0,
@@ -242,6 +244,7 @@ DEFAULTS: dict[str, str] = {
     "radius_km": "50",
     "lead_minutes": "10",
     "interval_minutes": "15",
+    "max_results": "600",   # Treffer je Suchlauf höchstens, Vorgabe für neue Gesuche (Issue #15; vorher fest 3 Seiten)
     "ntfy_url": "",
     "ntfy_topic": "",
     "ntfy_token": "",
@@ -340,6 +343,11 @@ def _migrate() -> None:
     # Artikelmerkmale je Gesuch (Issue #12)
     if "aspects" not in _columns("searches"):
         ex("ALTER TABLE searches ADD COLUMN aspects TEXT NOT NULL DEFAULT ''")
+    # Treffergrenze und Hinweis „mehr Treffer als die Grenze“ (Issue #15)
+    if "max_results" not in _columns("searches"):
+        ex("ALTER TABLE searches ADD COLUMN max_results INTEGER")
+    if "capped" not in _columns("searches"):
+        ex("ALTER TABLE searches ADD COLUMN capped INTEGER NOT NULL DEFAULT 0")
     # Abfragen je Konto und Plattform: Tabellen mit neuem Schlüssel anlegen. Bisherige Zahlen gelten für eBay
     # (Tabellen vor 0.3 hatten keine Plattform) und für den Admin.
     if "user_id" not in _columns("api_usage"):
