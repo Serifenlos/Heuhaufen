@@ -25,6 +25,11 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh \
  && ! grep -q '@import "tailwindcss"' app/static/css/app-min.css \
  || (echo "build/app ist unvollständig oder das CSS ist nicht übersetzt. Bitte in CodeKit bauen und build/ committen." && exit 1)
 
+# Selbsttest mit genau den Paketen dieses Images: Start, Anmeldung, Formulare, Schutzschichten (ohne Netzwerk,
+# in einem Wegwerf-Datenordner). Schlägt er fehl, bricht der Build ab und das bisherige Image bleibt in Betrieb.
+COPY docker/selbsttest.py /tmp/selbsttest.py
+RUN python /tmp/selbsttest.py && rm -f /tmp/selbsttest.py
+
 # Versionsnummer, übergibt GitHub beim Bauen (siehe VERSION und scripts/version.py).
 # Steht bewusst hier unten, damit eine neue Nummer die Schichten darüber nicht neu baut.
 # Sie landet in einer Datei und nicht in einer Umgebungsvariable: Portainer übernimmt beim
@@ -40,4 +45,6 @@ HEALTHCHECK --interval=60s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).status == 200 else 1)"
 
 ENTRYPOINT ["docker-entrypoint.sh"]
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
+# Die Angaben eines Reverse Proxys (X-Forwarded-For, X-Forwarded-Proto) wertet Heuhaufen selbst aus und
+# glaubt sie nur bekannten Proxys (app/netz.py, FORWARDED_ALLOW_IPS). uvicorn lässt sie deshalb unberührt.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--no-server-header"]

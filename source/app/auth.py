@@ -30,6 +30,10 @@ SESSION_SECONDS = 12 * 3600         # normale Sitzung: höchstens 12 Stunden ...
 SESSION_IDLE = 60 * 60              # ... und Abmeldung nach 60 Minuten ohne Aktivität
 PENDING_SECONDS = 5 * 60            # Zeit für die Eingabe des 2FA-Codes
 MIN_PASSWORD = 10
+# Platzhalter aus Vorlagen (docker-compose.yml, Anleitungen): Wer sie stehen lässt, hätte ein Passwort, das
+# im Internet nachzulesen ist. Solche Werte nimmt Heuhaufen nicht als Passwort an.
+PLACEHOLDER_PASSWORDS = frozenset({"passwort-fuer-den-ersten-login", "dein-passwort", "deinpasswort", "changeme123",
+                                   "change-me-please", "passwort123", "password123", "1234567890"})
 
 _hasher = PasswordHasher()
 _DUMMY_HASH = _hasher.hash(secrets.token_hex(16))
@@ -57,15 +61,20 @@ def verify_password(user: dict | None, password: str) -> bool:
     return ok and user is not None
 
 
+def usable_password(password: str) -> bool:
+    """Taugt als Passwort aus der Docker-Konfiguration: lang genug und kein Platzhalter aus einer Vorlage."""
+    return len(password) >= MIN_PASSWORD and password.strip().lower() not in PLACEHOLDER_PASSWORDS
+
+
 def ensure_admin() -> None:
     """Beim allerersten Start das Konto des Admins anlegen (ADMIN_USER, ADMIN_PASSWORD).
     ADMIN_RESET gilt nur für dieses Konto."""
     existing = db.q1("SELECT id, username FROM users WHERE role = 'admin' ORDER BY id LIMIT 1")
     if existing:
         if config.ADMIN_RESET:
-            if len(config.ADMIN_PASSWORD) < MIN_PASSWORD:
-                log.error("ADMIN_RESET ist gesetzt, aber ADMIN_PASSWORD fehlt oder hat weniger als %d Zeichen.",
-                          MIN_PASSWORD)
+            if not usable_password(config.ADMIN_PASSWORD):
+                log.error("ADMIN_RESET ist gesetzt, aber ADMIN_PASSWORD fehlt, hat weniger als %d Zeichen oder ist "
+                          "der Platzhalter aus der Vorlage. Das Passwort bleibt, wie es war.", MIN_PASSWORD)
                 return
             db.ex("UPDATE users SET password_hash = ?, totp_enabled = 0, totp_secret = NULL WHERE id = ?",
                   (hash_password(config.ADMIN_PASSWORD), existing["id"]))
@@ -74,10 +83,12 @@ def ensure_admin() -> None:
                         existing["username"])
         return
     password = config.ADMIN_PASSWORD
-    if not password:
+    if not usable_password(password):
+        reason = ("Kein ADMIN_PASSWORD gesetzt." if not password else
+                  f"ADMIN_PASSWORD hat weniger als {MIN_PASSWORD} Zeichen oder ist der Platzhalter aus der Vorlage "
+                  "und wird nicht verwendet.")
         password = secrets.token_urlsafe(12)
-        log.warning("Kein ADMIN_PASSWORD gesetzt. Erstes Passwort für '%s': %s  (bitte gleich ändern)",
-                    config.ADMIN_USER, password)
+        log.warning("%s Erstes Passwort für '%s': %s  (bitte gleich ändern)", reason, config.ADMIN_USER, password)
     db.ex("INSERT INTO users(username, password_hash, role, created_at) VALUES (?, ?, 'admin', ?)",
           (config.ADMIN_USER, hash_password(password), time.time()))
     log.info("Benutzerkonto '%s' angelegt.", config.ADMIN_USER)
@@ -172,9 +183,14 @@ def reset_password(user_id: int, password: str) -> None:
 # ---------------------------------------------------------------- Sperre nach Fehlversuchen
 
 class Throttle:
+    """Zählt Fehlversuche der letzten Viertelstunde je Adresse und je Benutzername, falsche Codes der
+    Zwei-Faktor-Anmeldung zusätzlich je Konto. Die Grenze je Benutzername gilt unabhängig von der Adresse:
+    Sie hält auch dann, wenn jemand seine Adresse wechselt oder fälscht."""
     WINDOW = 15 * 60
     MAX_PER_IP = 5
     MAX_PER_USER = 20
+    MAX_CODES = 5       # falsche 2FA-Codes je Konto (ein Code hat nur sechs Ziffern)
+    MAX_KEYS = 5000     # mehr Adressen und Namen merkt sich die Sperre nicht (Schutz vor vollem Speicher)
 
     def __init__(self) -> None:
         self._fails: dict[str, list[float]] = {}
@@ -182,23 +198,45 @@ class Throttle:
     def _recent(self, key: str) -> list[float]:
         now = time.time()
         recent = [t for t in self._fails.get(key, []) if now - t < self.WINDOW]
-        self._fails[key] = recent
+        if recent:
+            self._fails[key] = recent
+        else:
+            self._fails.pop(key, None)
         return recent
 
-    def wait_seconds(self, ip: str, user: str) -> int:
-        for key, limit in ((f"ip:{ip}", self.MAX_PER_IP), (f"user:{user.lower()}", self.MAX_PER_USER)):
+    def wait_seconds(self, ip: str, user: str, codes: bool = False) -> int:
+        limits = [(f"ip:{ip}", self.MAX_PER_IP), (f"user:{user.lower()}", self.MAX_PER_USER)]
+        if codes:
+            limits.append((f"code:{user.lower()}", self.MAX_CODES))
+        for key, limit in limits:
             recent = self._recent(key)
             if len(recent) >= limit:
                 return int(self.WINDOW - (time.time() - recent[0])) + 1
         return 0
 
-    def fail(self, ip: str, user: str) -> None:
+    def fail(self, ip: str, user: str, code: bool = False) -> None:
         now = time.time()
-        for key in (f"ip:{ip}", f"user:{user.lower()}"):
+        keys = [f"ip:{ip}", f"user:{user.lower()}"] + ([f"code:{user.lower()}"] if code else [])
+        for key in keys:
             self._fails.setdefault(key, []).append(now)
+        if len(self._fails) > self.MAX_KEYS:
+            self._prune(now)
 
-    def reset(self, ip: str) -> None:
+    def _prune(self, now: float) -> None:
+        """Abgelaufene Einträge entfernen. Sind es danach immer noch zu viele, die ältesten."""
+        for key in [k for k, times in self._fails.items() if not times or now - times[-1] >= self.WINDOW]:
+            del self._fails[key]
+        if len(self._fails) > self.MAX_KEYS:
+            by_age = sorted(self._fails, key=lambda k: self._fails[k][-1])
+            for key in by_age[: len(self._fails) - self.MAX_KEYS // 2]:
+                del self._fails[key]
+
+    def reset(self, ip: str, user: str | None = None) -> None:
+        """Nach einer gelungenen Anmeldung: Fehlversuche dieser Adresse vergessen, mit user auch die
+        falschen 2FA-Codes des Kontos."""
         self._fails.pop(f"ip:{ip}", None)
+        if user is not None:
+            self._fails.pop(f"code:{user.lower()}", None)
 
 
 throttle = Throttle()

@@ -10,13 +10,22 @@ services:
     image: ghcr.io/serifenlos/heuhaufen:latest
     container_name: heuhaufen
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true         # der Container kann sich keine zusätzlichen Rechte verschaffen
     ports:
       - "8765:8000"                    # links der Port im Heimnetz, bei Bedarf ändern
+      # Nur über einen Reverse Proxy auf demselben Server erreichbar (nicht direkt aus dem Heimnetz):
+      # - "127.0.0.1:8765:8000"
     environment:
       ADMIN_USER: "admin"                                # Benutzername des Admins
-      ADMIN_PASSWORD: "PASSWORT-FUER-DEN-ERSTEN-LOGIN"   # mindestens 10 Zeichen, gilt nur beim allerersten Start
+      # Mindestens 10 Zeichen, gilt nur beim allerersten Start. Bleibt der Platzhalter stehen, erzeugt
+      # Heuhaufen ein zufälliges Passwort und schreibt es ins Protokoll des Containers.
+      ADMIN_PASSWORD: "PASSWORT-FUER-DEN-ERSTEN-LOGIN"
       TZ: "Europe/Berlin"
       COOKIE_SECURE: "auto"
+      # Nur nötig, wenn ein Reverse Proxy in einem anderen Container oder auf einem anderen Rechner läuft:
+      # dessen Adresse oder Netz, mehrere mit Komma. Der Reverse Proxy der Synology braucht das nicht.
+      # FORWARDED_ALLOW_IPS: "172.20.0.5"
       # Besitzer des Datenordners (Synology: meist 1026 und 100, per SSH mit "id" prüfen)
       PUID: "1000"
       PGID: "1000"

@@ -20,11 +20,16 @@ concurrency:
   group: docker-image
   cancel-in-progress: false
 
+# Fremde Bausteine (uses: …) sind auf einen festen Stand gepinnt (Commit-Hash, dahinter die Version).
+# Ein Versions-Tag wie @v4 lässt sich nachträglich auf anderen Code umbiegen, ein Hash nicht. Der Baustein
+# läuft mit Schreibrecht auf das Image, das später auf dem Server läuft, deshalb diese Vorsicht.
+# Aktualisieren: neue Version auf GitHub ansehen, dann Hash und Kommentar hier ersetzen
+# (Hash zu einer Version:  git ls-remote https://github.com/actions/checkout refs/tags/v4.4.0).
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262   # v4.4.0
         with:
           fetch-depth: 0    # ganze Historie mit allen Tags, für die Versionsnummer
 
@@ -36,9 +41,9 @@ jobs:
         id: version
         run: python3 scripts/version.py | tee -a "$GITHUB_OUTPUT"
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f   # v3.12.0
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9   # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -46,7 +51,7 @@ jobs:
 
       # Image-Tags: latest, 0.1.3 (genau diese Version), 0.1 (neueste 0.1.x), sha-…
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051   # v5.10.0
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -58,7 +63,7 @@ jobs:
             org.opencontainers.image.title=Heuhaufen
             org.opencontainers.image.version=${{ steps.version.outputs.version }}
 
-      - uses: docker/build-push-action@v6
+      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8   # v6.19.2
         with:
           context: .
           file: docker/Dockerfile
@@ -72,13 +77,18 @@ jobs:
           cache-to: type=gha,mode=max
 
       # Erst nach erfolgreichem Build: Fehlgeschlagene Läufe verbrauchen keine Nummer.
+      # Werte aus früheren Schritten kommen als Umgebungsvariablen in die Shell (env), nicht in den Befehl
+      # kopiert: So kann ihr Inhalt nie als Befehl ausgeführt werden.
       - name: Versions-Tag setzen
         if: steps.version.outputs.new == 'true'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.tag }}" -m "Heuhaufen ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.tag }}"
+          git tag -a "$TAG" -m "Heuhaufen $VERSION"
+          git push origin "$TAG"
 
       # Release mit Changelog aus den Commit-Nachrichten (siehe scripts/release_notes.py).
       # Auf GitHub lässt es sich danach über „Edit“ von Hand ergänzen.
@@ -86,23 +96,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           if gh release view "$TAG" > /dev/null 2>&1; then
             echo "Release $TAG gibt es schon."
           else
             python3 scripts/release_notes.py "$TAG" > release-notes.md
             gh release create "$TAG" --verify-tag \
-              --title "Heuhaufen ${{ steps.version.outputs.version }}" \
+              --title "Heuhaufen $VERSION" \
               --notes-file release-notes.md
           fi
 
       - name: Zusammenfassung
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          IMAGE_TAGS: ${{ steps.meta.outputs.tags }}
         run: |
           {
-            echo "### Heuhaufen ${{ steps.version.outputs.version }}"
+            echo "### Heuhaufen $VERSION"
             echo ""
             echo "Image-Tags:"
             echo '```'
-            echo "${{ steps.meta.outputs.tags }}"
+            echo "$IMAGE_TAGS"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"

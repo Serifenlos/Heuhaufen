@@ -203,6 +203,14 @@
       "oAP" : "\/build\/app\/market.py",
       "oF" : 1
     },
+    "\/source\/app\/netz.py" : {
+      "cB" : 0,
+      "ft" : 8192,
+      "hM" : 0,
+      "oA" : 2,
+      "oAP" : "\/build\/app\/netz.py",
+      "oF" : 1
+    },
     "\/source\/app\/notify.py" : {
       "cB" : 0,
       "ft" : 8192,
@@ -462,6 +470,14 @@
       "oAP" : "\/build\/app\/watcher.py",
       "oF" : 1
     },
+    "\/source\/app\/web.py" : {
+      "cB" : 0,
+      "ft" : 8192,
+      "hM" : 0,
+      "oA" : 2,
+      "oAP" : "\/build\/app\/web.py",
+      "oF" : 1
+    },
     "\/temp" : {
       "ft" : 65536,
       "oA" : 1,
@@ -489,7 +505,7 @@
     "displayValueWasSetByUser" : 0,
     "iconImageName" : "brackets-pale",
     "iconImageWasSetByUser" : 0,
-    "lastBuiltDate" : 816258532.68787897
+    "lastBuiltDate" : 816456073.13391304
   },
   "projectSettings" : {
     "abortBuildOnError" : 1,

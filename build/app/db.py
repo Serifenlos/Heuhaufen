@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -294,10 +295,22 @@ def init() -> None:
     _conn = sqlite3.connect(config.DB_PATH, check_same_thread=False, isolation_level=None)
     _conn.row_factory = sqlite3.Row
     _conn.execute("PRAGMA journal_mode=WAL")
+    _private_files()
     _conn.execute("PRAGMA foreign_keys=ON")
     _conn.execute("PRAGMA busy_timeout=5000")
     _conn.executescript(SCHEMA)
     _migrate()
+
+
+def _private_files() -> None:
+    """Die Datenbank enthält Passwort-Hashes, Sitzungen und Zugangsdaten: lesbar nur für den Besitzer,
+    nicht für andere Benutzer des Servers. Die Begleitdateien (-wal, -shm) legt SQLite mit denselben
+    Rechten an wie die Datenbank."""
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(f"{config.DB_PATH}{suffix}", 0o600)
+        except OSError:
+            pass   # Dateisystem ohne Unix-Rechte oder Datei noch nicht da
 
 
 def _columns(table: str) -> set[str]:
@@ -414,6 +427,8 @@ def transaction():
 
 # Gelten für die ganze Installation; alles andere gehört zum Konto (user_settings)
 GLOBAL_KEYS = frozenset({"app_url", "image_secret"})
+# Nie in den Einstellungen eines Kontos: der Schlüssel für signierte Adressen (liest nur signed.py)
+SECRET_KEYS = frozenset({"image_secret"})
 
 
 def owner_id() -> int | None:
@@ -447,7 +462,8 @@ def get_settings(user_id: int | None = None) -> dict:
     _user_id steht mit drin, damit Plattformen die Abfragen dem Konto zuordnen können."""
     s: dict = dict(DEFAULTS)
     for row in q("SELECT key, value FROM settings"):
-        s[row["key"]] = row["value"] if row["value"] is not None else ""
+        if row["key"] not in SECRET_KEYS:
+            s[row["key"]] = row["value"] if row["value"] is not None else ""
     uid = user_id if user_id is not None else owner_id()
     if uid is not None:
         for row in q("SELECT key, value FROM user_settings WHERE user_id = ?", (uid,)):

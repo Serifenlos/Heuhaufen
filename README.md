@@ -75,7 +75,7 @@ Ist Port 8765 schon belegt, in der Compose-Datei bei `8765:8000` die linke Zahl 
    - ntfy-Adresse, Topic und gegebenenfalls Access-Token eintragen und **Testnachricht senden**
 3. Das erste Gesuch anlegen.
 
-`ADMIN_PASSWORD` wird nur beim allerersten Start verwendet. Später änderst du das Passwort in den Einstellungen.
+`ADMIN_PASSWORD` wird nur beim allerersten Start verwendet. Später änderst du das Passwort in den Einstellungen. Die Zeile kannst du danach aus der Compose-Datei löschen, dann steht dort kein Passwort mehr.
 
 ## Weitere Personen einladen
 
@@ -124,7 +124,21 @@ In Portainer am einfachsten: den alten Stack stoppen, einen neuen Stack `heuhauf
 
 Heuhaufen ist für das eigene Heimnetz gedacht. Gib den Port nicht im Router frei; von unterwegs erreichst du ihn am besten per VPN.
 
-Für HTTPS kannst du einen Reverse Proxy davorschalten, etwa den von Synology DSM, Nginx Proxy Manager oder Caddy, mit Ziel `http://SERVER:8765`. Sobald die Seite per HTTPS aufgerufen wird, setzt Heuhaufen seine Cookies automatisch mit dem Secure-Flag. Am besten erlaubt der Proxy nur Zugriffe aus dem eigenen Netz.
+**HTTPS:** Über `http://SERVER:8765` gehen Passwort und Anmeldung unverschlüsselt durchs Netz. Schalte deshalb einen Reverse Proxy mit HTTPS davor, etwa den von Synology DSM, Nginx Proxy Manager oder Caddy, mit Ziel `http://SERVER:8765`, und erlaube dort am besten nur Zugriffe aus dem eigenen Netz. Sobald die Seite per HTTPS aufgerufen wird, setzt Heuhaufen seine Cookies automatisch mit dem Secure-Flag. Soll Heuhaufen nur noch über den Proxy erreichbar sein, trage in der Compose-Datei bei `ports` `127.0.0.1:8765:8000` ein. HSTS („immer HTTPS“) schaltest du bei Bedarf im Proxy ein; Heuhaufen setzt es nicht selbst, weil es für den ganzen Rechnernamen gilt und andere Dienste unter demselben Namen aussperren kann.
+
+**Reverse Proxy und echte Adressen:** Hinter einem Proxy sieht Heuhaufen nur dessen Adresse. Wer wirklich anfragt und ob die Verbindung verschlüsselt war, steht in den Kopfzeilen `X-Forwarded-For` und `X-Forwarded-Proto`. Die kann jeder mitschicken, deshalb glaubt Heuhaufen sie nur dem eigenen Container und seinem Docker-Gateway. Darüber kommt ein Proxy an, der auf demselben Server läuft, zum Beispiel der von Synology DSM. Läuft dein Proxy in einem anderen Container oder auf einem anderen Rechner, trage seine Adresse oder sein Netz in `FORWARDED_ALLOW_IPS` ein. Im Protokoll des Containers steht beim Start, wem Heuhaufen diese Angaben glaubt.
+
+**Was Heuhaufen selbst tut:**
+
+- Passwörter liegen nur als Argon2-Hash in der Datenbank, Sitzungen und Einladungs-Links nur als Hash. Die Datenbank ist nur für den Besitzer des Datenordners lesbar.
+- Nach fünf Fehlversuchen von einer Adresse oder zwanzig für einen Benutzernamen ist die Anmeldung eine Viertelstunde gesperrt, nach fünf falschen Codes auch die Zwei-Faktor-Anmeldung. Die Zwei-Faktor-Anmeldung schaltest du unter *Einstellungen → Anmeldung und Sicherheit* ein.
+- Jedes Konto sieht nur seine eigenen Gesuche, Einstellungen und Zugangsdaten, auch der Admin sieht die der anderen nicht.
+- Eingeladene Konten können Benachrichtigungen nur an den ntfy-Server des Admins oder an einen öffentlichen Server mit `https://` schicken, nicht an Geräte im Heimnetz.
+- Der Container läuft ohne Root-Rechte und kann sich keine dazuholen. Er nimmt nur Anfragen bis 256 KB an.
+- Nach außen spricht Heuhaufen nur mit eBay (Suche und Bilder) und mit deinem ntfy-Server. Es gibt keine Statistik, keine Fernwartung und kein Konto, das du nicht selbst angelegt hast.
+- Beim Bauen des Images läuft ein Selbsttest (`docker/selbsttest.py`). Passt etwas nicht, entsteht kein neues Image.
+
+**Aktuell bleiben:** Sicherheitslücken in den verwendeten Paketen behebt ein neues Image. Hol dir deshalb gelegentlich das neueste (`docker compose pull && docker compose up -d` bzw. in Portainer **Update the stack** mit **Re-pull image**).
 
 Bei einem öffentlichen ntfy-Server wie `ntfy.sh` kann jeder mitlesen, der den Topic-Namen kennt. Wähle dort einen schwer zu erratenden Namen oder nutze einen eigenen Server mit Access-Token.
 
@@ -139,11 +153,12 @@ Für das Konto des Admins: In der Compose-Datei `ADMIN_PASSWORD` auf ein neues P
 | Variable | Standard | Bedeutung |
 | --- | --- | --- |
 | `ADMIN_USER` | `admin` | Benutzername des Admins beim ersten Start |
-| `ADMIN_PASSWORD` | zufällig | Passwort beim ersten Start; fehlt es, steht ein zufälliges im Container-Log |
+| `ADMIN_PASSWORD` | zufällig | Passwort beim ersten Start, mindestens 10 Zeichen. Fehlt es, ist es kürzer oder steht noch der Platzhalter aus der Vorlage da, erzeugt Heuhaufen ein zufälliges und schreibt es ins Container-Log |
 | `ADMIN_RESET` | – | `true` setzt beim Start das Passwort des Admins auf `ADMIN_PASSWORD` zurück und schaltet 2FA ab |
 | `PUID` / `PGID` | `1000` | Benutzer und Gruppe, denen der Datenordner gehört. Auf Synology meist `1026` und `100`; per SSH zeigt `id` deine Werte |
 | `TZ` | `Europe/Berlin` | Zeitzone für die Anzeige |
 | `COOKIE_SECURE` | `auto` | `true` erzwingt Secure-Cookies, `auto` setzt sie nur bei HTTPS |
+| `FORWARDED_ALLOW_IPS` | Container und Docker-Gateway | Wem Heuhaufen `X-Forwarded-For` und `X-Forwarded-Proto` glaubt: Adressen oder Netze mit Komma, etwa `172.20.0.5, 10.0.0.0/24`. `none` glaubt niemandem, `*` allen (nur wenn wirklich jede Anfrage über den Proxy kommt) |
 | `EBAY_CLIENT_ID` / `EBAY_CLIENT_SECRET` | – | nicht mehr nötig: Die eBay-Zugangsdaten stehen in den Einstellungen. Sind sie hier noch gesetzt, übernimmt Heuhaufen sie beim Start einmal in die Einstellungen des Admins |
 
 Den Datenordner legst du in der Compose-Datei bei `volumes` fest (links der Ordner auf dem Server).

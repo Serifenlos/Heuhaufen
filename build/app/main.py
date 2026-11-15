@@ -12,15 +12,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
-from fastapi import FastAPI, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from starlette.requests import Request
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
+from starlette.staticfiles import StaticFiles
+from starlette.templating import Jinja2Templates
 
-from . import auth, config, db, details, images, kategorien, market, notify, signed, util
+from . import auth, config, db, details, images, kategorien, market, netz, notify, signed, util
 from .plattformen import liste as plattformen
 from .plattformen.basis import PURPOSES, RESULT_STEPS, PlatformError, result_limit
 from .watcher import Watcher
+from .web import App
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 log = logging.getLogger("heuhaufen")
@@ -31,19 +32,21 @@ watcher = Watcher()
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: App):
     db.init()
     auth.ensure_admin()
     db.adopt_owner_data()   # alles, was noch keinem Konto gehört, dem Admin geben
     plattformen.adopt_from_environment(dict(os.environ), log)
     watcher.start()
     log.info("Heuhaufen %s läuft.", config.APP_VERSION)
+    log.info("Angaben eines Reverse Proxys (X-Forwarded-For, X-Forwarded-Proto) gelten von: %s",
+             netz.TrustedProxy(None).describe())
     yield
     await watcher.stop()
     await images.close()
 
 
-app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+app = App(lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
@@ -119,8 +122,11 @@ CSP = ("default-src 'self'; img-src 'self' data: " + " ".join(f"https://*{h}" fo
 # /einladung/ und /zuruecksetzen/: Links vom Admin, geschützt durch das Geheimnis im Link (auth.create_token).
 PUBLIC_PREFIXES = ("/login", "/static/", "/healthz", "/favicon", "/bild/", "/erinnern/", "/einladung/",
                    "/zuruecksetzen/")
-# Seiten eines Gesuchs: nur für das Konto, dem es gehört (Prüfung in guard)
-SEARCH_PATH = re.compile(r"^/(?:searches|galerie)/(\d+)(?:/|$)")
+# Seiten eines Gesuchs: nur für das Konto, dem es gehört. Das prüft jede Route selbst (own_search) und
+# davor schon guard anhand des Pfads.
+SEARCH_PATH = re.compile(r"^/(?:searches|galerie)/([0-9]{1,15})(?:/|$)")
+# Was die Seite im Browser nicht braucht, darf sie dort auch nicht (Kamera, Mikrofon, Standort …)
+PERMISSIONS = "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
 
 
 # ---------------------------------------------------------------- Hilfen
@@ -134,7 +140,7 @@ def _secure_cookies(request: Request) -> bool:
         return True
     if config.COOKIE_SECURE in ("0", "false", "no"):
         return False
-    return request.url.scheme == "https"
+    return request.scope.get("scheme") == "https"   # über einen Reverse Proxy: siehe netz.TrustedProxy
 
 
 def set_cookie(resp: Response, request: Request, key: str, value: str, max_age: int | None = None) -> None:
@@ -147,6 +153,8 @@ def _with_headers(resp: Response) -> Response:
     resp.headers.setdefault("X-Content-Type-Options", "nosniff")
     resp.headers.setdefault("X-Frame-Options", "DENY")
     resp.headers.setdefault("Referrer-Policy", "no-referrer")
+    resp.headers.setdefault("Permissions-Policy", PERMISSIONS)
+    resp.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
     if resp.headers.get("content-type", "").startswith("text/html"):
         resp.headers.setdefault("Cache-Control", "no-store")
     return resp
@@ -157,9 +165,18 @@ def client_ip(request: Request) -> str:
 
 
 def safe_next(value: object) -> str:
-    if isinstance(value, str) and value.startswith("/") and not value.startswith("//") and "\\" not in value:
+    """Ziel nach der Anmeldung: nur ein Pfad dieser Seite. Steuerzeichen und Leerzeichen sind nicht erlaubt,
+    weil Browser sie aus Adressen streichen („/<Tab>/boese.example“ würde zu „//boese.example“)."""
+    if (isinstance(value, str) and value.startswith("/") and not value.startswith("//") and "\\" not in value
+            and len(value) <= 500 and not any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in value)):
         return value
     return "/"
+
+
+def request_path(request: Request) -> str:
+    """Der Pfad, nach dem auch die Routen ausgewählt werden. Bewusst nicht request.url.path: Der wird mit
+    der Host-Kopfzeile zusammengesetzt, und die bestimmt, wer die Anfrage schickt."""
+    return request.scope["path"]
 
 
 # Seiten, die nach dem Absenden eines Formulars direkt erscheinen (Fehler, Einladungs-Link): beim Neuladen
@@ -170,7 +187,7 @@ RELOAD_AFTER_POST = (("/settings/", "/settings"), ("/nutzer/", "/nutzer"))
 def reload_url(request: Request) -> str:
     """Adresse für „Ziehen zum Neuladen“: dieselbe Seite ohne Hinweis (?ok=/?err=), nach einem Formular die
     Seite, zu der es gehört."""
-    path = request.url.path
+    path = request_path(request)
     if request.method != "GET":
         return next((target for prefix, target in RELOAD_AFTER_POST if path.startswith(prefix)), path)
     query = urlencode([(k, v) for k, v in request.query_params.multi_items() if k not in ("ok", "err")])
@@ -214,6 +231,17 @@ def uid(request: Request) -> int:
     return request.state.session["user_id"]
 
 
+def own_search(request: Request, sid: int) -> dict | None:
+    """Das Gesuch, wenn es dem angemeldeten Konto gehört, sonst None. Fremde Gesuche gibt es für ein Konto
+    nicht: Jede Route eines Gesuchs holt es hierüber. (Gesuche ohne Konto stammen aus der Zeit vor den
+    Konten und gehören dem Admin.)"""
+    user = getattr(request.state, "user", None)
+    s = db.q1("SELECT * FROM searches WHERE id = ?", (sid,)) if user else None
+    if s and (s["user_id"] == user["id"] or (s["user_id"] is None and user["role"] == "admin")):
+        return s
+    return None
+
+
 def user_settings(request: Request) -> dict:
     return db.get_settings(uid(request))
 
@@ -228,7 +256,7 @@ def back(path: str, key: str | None = None, err: bool = False, anchor: str = "")
 @app.middleware("http")
 async def guard(request: Request, call_next):
     request.state.session = None
-    path = request.url.path
+    path = request_path(request)
     request.state.user = None
     legacy = None
     if not path.startswith(PUBLIC_PREFIXES):
@@ -247,10 +275,8 @@ async def guard(request: Request, call_next):
         request.state.user = user
         legacy = token if is_legacy else None
         match = SEARCH_PATH.match(path)
-        if match:   # fremde Gesuche gibt es für dieses Konto nicht
-            owner = db.q1("SELECT user_id FROM searches WHERE id = ?", (int(match.group(1)),))
-            if owner and owner["user_id"] != user["id"] and not (owner["user_id"] is None and user["role"] == "admin"):
-                return _with_headers(not_found(request))
+        if match and not own_search(request, int(match.group(1))):   # fremde Gesuche gibt es für dieses Konto nicht
+            return _with_headers(not_found(request))
     resp = await call_next(request)
     if legacy:   # Anmeldung aus „Ebay Watcher“: Cookie unter dem neuen Namen weiterführen
         remaining = int(request.state.session["expires_at"] - time.time())
@@ -260,18 +286,23 @@ async def guard(request: Request, call_next):
     return _with_headers(resp)
 
 
+# Reihenfolge von außen nach innen: Proxy-Angaben prüfen, Größe begrenzen, dann guard (Anmeldung)
+app.add_middleware(netz.BodyLimit)
+app.add_middleware(netz.TrustedProxy)
+
+
 @app.exception_handler(CsrfFailed)
 async def csrf_failed(request: Request, _exc: CsrfFailed):
     return render(request, "message.html", status_code=400, heading="Formular abgelaufen",
                   text="Lade die Seite neu und versuche es noch einmal.", link="/", link_text="Zur Übersicht")
 
 
-@app.get("/healthz")
-async def healthz():
+@app.get("/healthz", public=True)
+async def healthz(_request: Request):
     return PlainTextResponse("ok")
 
 
-@app.post("/erinnern/{sid}/{item_id}")
+@app.post("/erinnern/{sid:nr}/{item_id}", public=True)
 async def remind_item(request: Request, sid: int, item_id: str):
     """Knopf „1 Min vorher erinnern“ in der Benachrichtigung (ntfy schickt dafür einen POST vom Handy)."""
     if not signed.valid(request.query_params.get("s"), "erinnern", sid, item_id):
@@ -287,7 +318,7 @@ async def remind_item(request: Request, sid: int, item_id: str):
                              "wenn das Angebot dann noch unter deinem Limit liegt.")
 
 
-@app.api_route("/bild/{sid}/{item_id}", methods=["GET", "HEAD"])
+@app.api_route("/bild/{sid:nr}/{item_id}", methods=["GET", "HEAD"], public=True)
 async def article_image(request: Request, sid: int, item_id: str):
     """Artikelbild aus dem Bild-Cache. Beim ersten Abruf lädt Heuhaufen es einmal bei der Plattform.
     n: Nummer des Bildes (Galerie), g=1: groß."""
@@ -307,12 +338,14 @@ async def article_image(request: Request, sid: int, item_id: str):
                         headers={"Cache-Control": f"private, max-age={images.BROWSER_CACHE_SECONDS}"})
 
 
-@app.get("/galerie/{sid}/{item_id}")
+@app.get("/galerie/{sid:nr}/{item_id}")
 async def gallery(request: Request, sid: int, item_id: str):
     """Bilder eines Angebots für die Galerie (PhotoSwipe, siehe app.js), mit Breite und Höhe, dazu die
     Seitenleiste (panel) als fertiges HTML. Beim ersten Öffnen lädt Heuhaufen alle Bilder groß bei der
     Plattform und legt sie in den Bild-Cache. Beschreibung und Gebote holt es mit einer Einzelabfrage,
     höchstens alle 10 Minuten (details.py)."""
+    if not own_search(request, sid):
+        return JSONResponse({"items": []}, 404)
     row = db.q1("SELECT * FROM items WHERE search_id = ? AND item_id = ?", (sid, item_id))
     settings = user_settings(request)
     p = plattformen.of_item(row) if row else None
@@ -380,14 +413,14 @@ def _complete_login(request: Request, user_id: int, remember: bool, next_: str) 
     return resp
 
 
-@app.get("/login", response_class=HTMLResponse)
+@app.get("/login", public=True)
 async def login_page(request: Request):
     if auth.load_session(auth.session_token(request.cookies)[0]):
         return RedirectResponse("/", 303)
     return _login_form(request, request.query_params.get("next", "/"))
 
 
-@app.post("/login")
+@app.post("/login", public=True)
 async def login(request: Request):
     form = await request.form()
     next_ = safe_next(form.get("next"))
@@ -421,7 +454,7 @@ async def login(request: Request):
     return _complete_login(request, user["id"], remember, next_)
 
 
-@app.get("/login/2fa", response_class=HTMLResponse)
+@app.get("/login/2fa", public=True)
 async def login_2fa_page(request: Request):
     pending = auth.load_session(request.cookies.get(auth.PENDING_COOKIE), pending=True)
     if not pending:
@@ -430,7 +463,7 @@ async def login_2fa_page(request: Request):
                   next=safe_next(request.query_params.get("next", "/")), error=None)
 
 
-@app.post("/login/2fa")
+@app.post("/login/2fa", public=True)
 async def login_2fa(request: Request):
     token = request.cookies.get(auth.PENDING_COOKIE)
     pending = auth.load_session(token, pending=True)
@@ -442,17 +475,20 @@ async def login_2fa(request: Request):
         return RedirectResponse("/login", 303)
 
     user = db.q1("SELECT * FROM users WHERE id = ?", (pending["user_id"],))
+    if not user or not user["active"]:   # inzwischen gelöscht oder gesperrt
+        auth.destroy_session(token)
+        return RedirectResponse("/login", 303)
     ip = client_ip(request)
-    wait = auth.throttle.wait_seconds(ip, user["username"])
+    wait = auth.throttle.wait_seconds(ip, user["username"], codes=True)
     if wait:
         auth.destroy_session(token)
         return _login_form(request, next_, f"Zu viele Fehlversuche. Versuche es in {max(1, wait // 60)} Minuten wieder.",
                            status=429)
     if not auth.verify_totp(user, str(form.get("code", ""))):
-        auth.throttle.fail(ip, user["username"])
+        auth.throttle.fail(ip, user["username"], code=True)
         return render(request, "login_2fa.html", status_code=401, csrf=pending["csrf"], next=next_,
                       error="Der Code stimmt nicht. Nimm den aktuellen Code aus deiner Authenticator-App.")
-    auth.throttle.reset(ip)
+    auth.throttle.reset(ip, user["username"])
     auth.destroy_session(token)
     return _complete_login(request, user["id"], bool(pending["remember"]), next_)
 
@@ -488,7 +524,7 @@ def _notices(request: Request) -> list[dict]:
     return out
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get("/")
 async def dashboard(request: Request):
     now = time.time()
     searches = db.q("SELECT * FROM searches WHERE user_id = ? ORDER BY active DESC, created_at DESC", (uid(request),))
@@ -547,12 +583,12 @@ async def _offers_page(request: Request, tab: str) -> HTMLResponse:
                   has_distance=any(v.get("distance_km") is not None for v in shown))
 
 
-@app.get("/angebote", response_class=HTMLResponse)
+@app.get("/angebote")
 async def offers_today(request: Request):
     return await _offers_page(request, "heute")
 
 
-@app.get("/angebote/{tab}", response_class=HTMLResponse)
+@app.get("/angebote/{tab}")
 async def offers_tab(request: Request, tab: str):
     return await _offers_page(request, tab)
 
@@ -652,7 +688,7 @@ def _render_form(request: Request, values: dict, errors: dict, mode: str, sid: i
                   categories_max=kategorien.MAX_PER_SEARCH, aspects_max=kategorien.MAX_ASPECTS, result_steps=RESULT_STEPS)
 
 
-@app.get("/searches/new", response_class=HTMLResponse)
+@app.get("/searches/new")
 async def new_search_page(request: Request):
     return _render_form(request, _form_defaults(user_settings(request)), {}, "new")
 
@@ -672,9 +708,9 @@ async def create_search(request: Request):
     return back(f"/searches/{sid}", "created")
 
 
-@app.get("/searches/{sid}", response_class=HTMLResponse)
+@app.get("/searches/{sid:nr}")
 async def search_detail(request: Request, sid: int):
-    s = db.q1("SELECT * FROM searches WHERE id = ?", (sid,))
+    s = own_search(request, sid)
     if not s:
         return not_found(request)
     now = time.time()
@@ -701,10 +737,10 @@ def _hidden_views(s: dict, now: float) -> list[dict]:
     return [util.hidden_view(r, items.get(r["item_id"]), s, now) for r in rows]
 
 
-@app.get("/searches/{sid}/list/{kind}", response_class=HTMLResponse)
+@app.get("/searches/{sid:nr}/list/{kind}")
 async def search_list(request: Request, sid: int, kind: str):
     """Eingeklappte Listen („zu teuer“, „ausgeblendet“) werden erst beim Aufklappen geladen."""
-    s = db.q1("SELECT * FROM searches WHERE id = ?", (sid,))
+    s = own_search(request, sid)
     if not s or kind not in ("over", "hidden"):
         return not_found(request)
     now = time.time()
@@ -717,12 +753,12 @@ async def search_list(request: Request, sid: int, kind: str):
     return render(request, "includes/offer_list.html", offers=offers, kind=kind, sid=sid, now=now)
 
 
-@app.post("/searches/{sid}/hide")
+@app.post("/searches/{sid:nr}/hide")
 async def hide_item(request: Request, sid: int):
     form = await checked_form(request)
     item_id = str(form.get("item_id", ""))[:100]
     item = db.q1("SELECT * FROM items WHERE search_id = ? AND item_id = ?", (sid, item_id))
-    if not item:
+    if not item or not own_search(request, sid):
         return not_found(request)
     db.ex(
         "INSERT INTO hidden_items(search_id, item_id, platform, title, url, image, hidden_at) "
@@ -732,26 +768,28 @@ async def hide_item(request: Request, sid: int):
     return back(f"/searches/{sid}", "hidden", anchor="treffer")
 
 
-@app.post("/searches/{sid}/unhide")
+@app.post("/searches/{sid:nr}/unhide")
 async def unhide_item(request: Request, sid: int):
     form = await checked_form(request)
     item_id = str(form.get("item_id", ""))[:100]
+    if not own_search(request, sid):
+        return not_found(request)
     db.ex("DELETE FROM hidden_items WHERE search_id = ? AND item_id = ?", (sid, item_id))
     return back(f"/searches/{sid}", "unhidden", anchor="treffer")
 
 
-@app.get("/searches/{sid}/edit", response_class=HTMLResponse)
+@app.get("/searches/{sid:nr}/edit")
 async def edit_search_page(request: Request, sid: int):
-    s = db.q1("SELECT * FROM searches WHERE id = ?", (sid,))
+    s = own_search(request, sid)
     if not s:
         return not_found(request)
     return _render_form(request, _values_from_search(s, user_settings(request)), {}, "edit", sid)
 
 
-@app.post("/searches/{sid}/edit")
+@app.post("/searches/{sid:nr}/edit")
 async def update_search(request: Request, sid: int):
     form = await checked_form(request)
-    if not db.q1("SELECT id FROM searches WHERE id = ?", (sid,)):
+    if not own_search(request, sid):
         return not_found(request)
     values, errors = _parse_search_form(form)
     if errors:
@@ -766,10 +804,10 @@ async def update_search(request: Request, sid: int):
     return back(f"/searches/{sid}", "updated")
 
 
-@app.post("/searches/{sid}/toggle")
+@app.post("/searches/{sid:nr}/toggle")
 async def toggle_search(request: Request, sid: int):
     await checked_form(request)
-    s = db.q1("SELECT active FROM searches WHERE id = ?", (sid,))
+    s = own_search(request, sid)
     if not s:
         return not_found(request)
     db.ex("UPDATE searches SET active = ?, last_run = NULL WHERE id = ?", (0 if s["active"] else 1, sid))
@@ -777,17 +815,21 @@ async def toggle_search(request: Request, sid: int):
     return back(f"/searches/{sid}", "paused" if s["active"] else "resumed")
 
 
-@app.post("/searches/{sid}/run")
+@app.post("/searches/{sid:nr}/run")
 async def run_search(request: Request, sid: int):
     await checked_form(request)
+    if not own_search(request, sid):
+        return not_found(request)
     db.ex("UPDATE searches SET last_run = NULL WHERE id = ?", (sid,))
     watcher.poke()
     return back(f"/searches/{sid}", "run")
 
 
-@app.post("/searches/{sid}/delete")
+@app.post("/searches/{sid:nr}/delete")
 async def delete_search(request: Request, sid: int):
     await checked_form(request)
+    if not own_search(request, sid):
+        return not_found(request)
     db.ex("DELETE FROM searches WHERE id = ?", (sid,))
     return back("/", "deleted")
 
@@ -817,7 +859,7 @@ def _category_list(request: Request, p, rows: list[dict], **ctx) -> HTMLResponse
     return render(request, "includes/category_list.html", platform=p, rows=rows, **ctx)
 
 
-@app.get("/kategorien/{key}", response_class=HTMLResponse)
+@app.get("/kategorien/{key}")
 async def category_children(request: Request, key: str):
     """Unterkategorien von parent (leer: oberste Ebene)."""
     p, problem = await _category_source(request, key)
@@ -828,7 +870,7 @@ async def category_children(request: Request, key: str):
                           mode="tree")
 
 
-@app.get("/kategorien/{key}/suche", response_class=HTMLResponse)
+@app.get("/kategorien/{key}/suche")
 async def category_search(request: Request, key: str):
     p, problem = await _category_source(request, key)
     if problem:
@@ -837,7 +879,7 @@ async def category_search(request: Request, key: str):
     return _category_list(request, p, kategorien.find(p.key, text), mode="search", text=text)
 
 
-@app.get("/kategorien/{key}/vorschlaege", response_class=HTMLResponse)
+@app.get("/kategorien/{key}/vorschlaege")
 async def category_suggestions(request: Request, key: str):
     """Kategorien passend zum Suchbegriff des Gesuchs (Abfrage bei der Plattform, einen Tag gemerkt)."""
     p, problem = await _category_source(request, key)
@@ -901,7 +943,7 @@ def _platform_panels(settings: dict) -> list[dict]:
     return out
 
 
-@app.get("/settings", response_class=HTMLResponse)
+@app.get("/settings")
 async def settings_page(request: Request):
     return _settings_page(request)
 
@@ -963,13 +1005,19 @@ async def save_ntfy(request: Request):
     form = await checked_form(request)
     values = {k: str(form.get(k, "")).strip() for k in ("ntfy_url", "ntfy_topic")}
     errors = {}
-    if values["ntfy_url"] and not values["ntfy_url"].startswith(("http://", "https://")):
+    if len(values["ntfy_url"]) > 300 or (values["ntfy_url"] and not values["ntfy_url"].startswith(("http://", "https://"))):
         errors["ntfy_url"] = "Die Adresse beginnt mit https://, zum Beispiel https://ntfy.deine-domain.de."
+    elif values["ntfy_url"]:   # wohin dieses Konto senden darf: netz.ntfy_problem
+        problem = await notify.target_problem(values["ntfy_url"], uid(request))
+        if problem:
+            errors["ntfy_url"] = problem
     if values["ntfy_topic"] and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", values["ntfy_topic"]):
         errors["ntfy_topic"] = "Erlaubt sind Buchstaben, Ziffern, Binde- und Unterstrich."
+    token = str(form.get("ntfy_token", "")).strip()
+    if token and not re.fullmatch(r"[\x21-\x7e]{1,300}", token):
+        errors["ntfy_token"] = "Ein Access-Token hat keine Leerzeichen, Umlaute oder Sonderzeichen außerhalb von ASCII."
     if errors:
         return _settings_page(request, errors, values, 422)
-    token = str(form.get("ntfy_token", "")).strip()
     if form.get("clear_token"):
         values["ntfy_token"] = ""
     elif token:
@@ -1012,7 +1060,7 @@ async def change_password(request: Request):
     return back("/settings", "password", anchor="sicherheit")
 
 
-@app.post("/settings/2fa/start", response_class=HTMLResponse)
+@app.post("/settings/2fa/start")
 async def start_2fa(request: Request):
     await checked_form(request)
     user = current_user(request)
@@ -1024,7 +1072,7 @@ async def start_2fa(request: Request):
                   qr=auth.totp_qr_data_uri(secret, user["username"]), error=None)
 
 
-@app.post("/settings/2fa/enable", response_class=HTMLResponse)
+@app.post("/settings/2fa/enable")
 async def enable_2fa(request: Request):
     form = await checked_form(request)
     user = current_user(request)
@@ -1151,14 +1199,14 @@ def _other_user(request: Request, user_id: int) -> dict | None:
     return row if row and row["id"] != uid(request) and row["role"] != "admin" else None
 
 
-@app.get("/nutzer", response_class=HTMLResponse)
+@app.get("/nutzer")
 async def users_page(request: Request):
     if not _is_admin(request):
         return not_found(request)
     return _users_page(request)
 
 
-@app.post("/nutzer/einladen", response_class=HTMLResponse)
+@app.post("/nutzer/einladen")
 async def invite_user(request: Request):
     form = await checked_form(request)
     if not _is_admin(request):
@@ -1171,7 +1219,7 @@ async def invite_user(request: Request):
     return _users_page(request, created=_mail(request, "invite", token, expires, email))
 
 
-@app.post("/nutzer/einladung/{tid}/neu", response_class=HTMLResponse)
+@app.post("/nutzer/einladung/{tid:nr}/neu")
 async def renew_invite(request: Request, tid: int):
     await checked_form(request)
     row = db.q1("SELECT * FROM user_tokens WHERE id = ? AND kind = 'invite' AND used_at IS NULL", (tid,))
@@ -1181,7 +1229,7 @@ async def renew_invite(request: Request, tid: int):
     return _users_page(request, created=_mail(request, "invite", token, expires, row["email"]))
 
 
-@app.post("/nutzer/einladung/{tid}/zurueckziehen")
+@app.post("/nutzer/einladung/{tid:nr}/zurueckziehen")
 async def revoke_invite(request: Request, tid: int):
     await checked_form(request)
     if not _is_admin(request):
@@ -1190,7 +1238,7 @@ async def revoke_invite(request: Request, tid: int):
     return back("/nutzer", "invite_revoked")
 
 
-@app.post("/nutzer/{user_id}/zuruecksetzen", response_class=HTMLResponse)
+@app.post("/nutzer/{user_id:nr}/zuruecksetzen")
 async def reset_link(request: Request, user_id: int):
     await checked_form(request)
     user = _other_user(request, user_id) if _is_admin(request) else None
@@ -1200,7 +1248,7 @@ async def reset_link(request: Request, user_id: int):
     return _users_page(request, created=_mail(request, "reset", token, expires, user["email"], user["username"]))
 
 
-@app.post("/nutzer/{user_id}/sperren")
+@app.post("/nutzer/{user_id:nr}/sperren")
 async def lock_user(request: Request, user_id: int):
     await checked_form(request)
     user = _other_user(request, user_id) if _is_admin(request) else None
@@ -1212,7 +1260,7 @@ async def lock_user(request: Request, user_id: int):
     return back("/nutzer", "user_locked" if user["active"] else "user_unlocked", anchor="konten")
 
 
-@app.post("/nutzer/{user_id}/loeschen")
+@app.post("/nutzer/{user_id:nr}/loeschen")
 async def delete_user(request: Request, user_id: int):
     await checked_form(request)
     user = _other_user(request, user_id) if _is_admin(request) else None
@@ -1243,13 +1291,13 @@ def _link_invalid(request: Request) -> HTMLResponse:
                   link="/login", link_text="Zur Anmeldung")
 
 
-@app.get("/einladung/{token}", response_class=HTMLResponse)
+@app.get("/einladung/{token}", public=True)
 async def invite_page(request: Request, token: str):
     row = auth.load_token(token, "invite")
     return _account_form(request, "invite", token, row) if row else _link_invalid(request)
 
 
-@app.post("/einladung/{token}", response_class=HTMLResponse)
+@app.post("/einladung/{token}", public=True)
 async def accept_invite(request: Request, token: str):
     row = auth.load_token(token, "invite")
     if not row:
@@ -1271,13 +1319,13 @@ async def accept_invite(request: Request, token: str):
     return _complete_login(request, user_id, False, "/settings?ok=welcome#ebay")
 
 
-@app.get("/zuruecksetzen/{token}", response_class=HTMLResponse)
+@app.get("/zuruecksetzen/{token}", public=True)
 async def reset_page(request: Request, token: str):
     row = auth.load_token(token, "reset")
     return _account_form(request, "reset", token, row) if row else _link_invalid(request)
 
 
-@app.post("/zuruecksetzen/{token}", response_class=HTMLResponse)
+@app.post("/zuruecksetzen/{token}", public=True)
 async def reset_submit(request: Request, token: str):
     row = auth.load_token(token, "reset")
     if not row:

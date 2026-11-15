@@ -178,7 +178,8 @@
       <div class="grid min-w-0 gap-2">
         <div class="flex items-center gap-1"><label class="{{ ui.label() }}" for="ntfy_token">Access-Token</label>{{ ui.info('ntfy_token') }}</div>
         <input class="{{ ui.input() }}" id="ntfy_token" name="ntfy_token" type="password" value="" autocomplete="off"
-               placeholder="{{ 'Gespeichert, zum Ändern neu eingeben' if has_token else 'tk_…' }}">
+               placeholder="{{ 'Gespeichert, zum Ändern neu eingeben' if has_token else 'tk_…' }}" {% if errors.ntfy_token %}aria-invalid="true"{% endif %}>
+        {{ ui.error(errors, 'ntfy_token') }}
         {{ ui.info_panel('ntfy_token', 'Access-Token', 'Empfohlen, weil dein ntfy-Server aus dem Internet erreichbar ist.') }}
         {% if has_token %}
         <label class="flex cursor-pointer items-start gap-2.5 text-note"><input class="{{ ui.checkbox() }}" type="checkbox" name="clear_token" value="1"> Gespeicherten Token entfernen</label>

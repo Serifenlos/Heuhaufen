@@ -3,5 +3,6 @@
 !build/app
 !docker/requirements.txt
 !docker/docker-entrypoint.sh
+!docker/selbsttest.py
 **/__pycache__
 **/.DS_Store

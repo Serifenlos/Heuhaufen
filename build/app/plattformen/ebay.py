@@ -257,6 +257,12 @@ def image_size(url: str | None, size: int = 500) -> str | None:
     return re.sub(r"s-l\d+", f"s-l{size}", url)
 
 
+def _web_url(value: object) -> str:
+    """Link zum Angebot, nur als https-Adresse. Alles andere (etwa „javascript:…“) wird verworfen."""
+    value = value.strip() if isinstance(value, str) else ""
+    return value if value.startswith("https://") and len(value) <= 2000 else ""
+
+
 def parse_listing(d: dict, pickup: bool = False) -> dict:
     """Wandelt eine eBay item_summary- oder getItem-Antwort in die gemeinsame Form um (basis.LISTING_FIELDS).
     Verkäuferdaten werden absichtlich nicht übernommen."""
@@ -311,7 +317,7 @@ def parse_listing(d: dict, pickup: bool = False) -> dict:
         "item_id": d.get("itemId"),
         "platform": "ebay",
         "title": d.get("title") or "",
-        "url": d.get("itemWebUrl") or d.get("itemAffiliateWebUrl") or "",
+        "url": _web_url(d.get("itemWebUrl") or d.get("itemAffiliateWebUrl")),
         "image": image,
         "images": json.dumps(urls) if urls else None,
         "condition_text": (d.get("condition") or "").strip()[:120] or None,
