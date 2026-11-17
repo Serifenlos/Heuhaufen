@@ -640,8 +640,7 @@ class Watcher:
             "image": self._image(settings, s, v),
             "priority": 4,   # hoch; dringend (5) bleibt der Erinnerung 1 Minute vor Ende vorbehalten
             "tags": [] if heart else ["hourglass_flowing_sand"],   # mit Herz steht ❤️ vorn, sonst ⏳
-            # Mit Herz ist die Erinnerung 1 Minute vorher schon gesetzt, der Knopf dafür entfällt
-            "actions": self._actions(settings, s, v, remind=not heart and s["lead_minutes"] * 60 > self.REMIND_BEFORE + 60),
+            "actions": self._actions(settings, s, v, remind=s["lead_minutes"] * 60 > self.REMIND_BEFORE + 60),
         }
 
     def _fixed_push(self, s: dict, v: dict, settings: dict) -> dict:

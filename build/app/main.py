@@ -120,7 +120,7 @@ MESSAGES = {
     "market": "Gespeichert. Neue Vergleichsangebote holt Heuhaufen in den nächsten Minuten.",
     "display": "Gespeichert.",
     "unhidden": "Angebot wieder eingeblendet.",
-    "kept": "Gemerkt: Heuhaufen meldet sich vor dem Ende, auch über dem Limit.",
+    "kept": "Herz gesetzt: Heuhaufen meldet sich vor dem Ende, auch über dem Limit.",
     "unkept": "Herz entfernt.",
     "logout": "Du bist abgemeldet.",
     "email": "E-Mail-Adresse gespeichert.",
@@ -820,9 +820,9 @@ async def unhide_item(request: Request, sid: int):
 
 @app.post("/searches/{sid:nr}/herz")
 async def keep_item(request: Request, sid: int):
-    """Herz an einer Auktion (Issue #20, Knopf in der Galerie): Heuhaufen verfolgt sie auch über dem Limit,
-    meldet sich vor dem Ende und erinnert 1 Minute vorher. keep=1 setzt das Herz, keep=0 nimmt es weg
-    (samt Erinnerung)."""
+    """Herz an einer Auktion (Issue #20, Knopf in der Galerie): Heuhaufen verfolgt sie auch über dem Limit und
+    meldet sich vor dem Ende wie bei jeder Auktion unter dem Limit (mit dem Knopf „1 Min vorher erinnern“).
+    keep=1 setzt das Herz, keep=0 nimmt es weg. Die Erinnerung 1 Minute vorher bleibt davon unberührt."""
     form = await checked_form(request)
     item_id = str(form.get("item_id", ""))[:100]
     s = own_search(request, sid)
@@ -830,13 +830,7 @@ async def keep_item(request: Request, sid: int):
     if not item or not util.is_auction_for(item, s):
         return not_found(request)
     on = form.get("keep") == "1"
-    if on:
-        remind = bool(item["end_time"] and item["end_time"] - time.time() > Watcher.REMIND_BEFORE + 10)
-        db.ex("UPDATE items SET keep = 1, remind = CASE WHEN ? THEN 1 ELSE remind END, "
-              "reminded = CASE WHEN ? THEN 0 ELSE reminded END WHERE search_id = ? AND item_id = ?",
-              (remind, remind, sid, item_id))
-    else:
-        db.ex("UPDATE items SET keep = 0, remind = 0 WHERE search_id = ? AND item_id = ?", (sid, item_id))
+    db.ex("UPDATE items SET keep = ? WHERE search_id = ? AND item_id = ?", (int(on), sid, item_id))
     watcher.poke()
     if "application/json" in request.headers.get("accept", ""):   # aus der Galerie (app.js)
         return JSONResponse({"keep": on}, headers={"Cache-Control": "no-store"})

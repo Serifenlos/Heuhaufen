@@ -380,6 +380,11 @@ def _migrate() -> None:
     # Von selbst ausgeblendet, weil wieder eingestellt (Issue #23)
     if "auto" not in _columns("hidden_items"):
         ex("ALTER TABLE hidden_items ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
+    # Einmalig (Stand der Datenbank in PRAGMA user_version): Die erste Fassung der Herz-Auktionen (Issue #20)
+    # setzte „1 Min vorher erinnern“ von selbst. Das gibt es jetzt nur noch per Knopf in der Benachrichtigung.
+    if q1("PRAGMA user_version")["user_version"] < 1:
+        ex("UPDATE items SET remind = 0 WHERE keep = 1 AND reminded = 0")
+        ex("PRAGMA user_version = 1")
     # Defekte Artikel (Issue #21): bestehende Gesuche suchen sie weiter mit, neue schließen sie aus
     if "defects" not in _columns("searches"):
         ex("ALTER TABLE searches ADD COLUMN defects TEXT NOT NULL DEFAULT 'include'")
