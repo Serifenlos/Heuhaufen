@@ -81,6 +81,7 @@ CREATE TABLE IF NOT EXISTS searches (
     incl_shipping       INTEGER NOT NULL DEFAULT 1,
     free_shipping_only  INTEGER NOT NULL DEFAULT 0,
     condition           TEXT NOT NULL DEFAULT 'any',       -- any | new | used
+    defects             TEXT NOT NULL DEFAULT 'include',   -- defekte Artikel: include | exclude | only (Issue #21)
     lead_minutes        INTEGER NOT NULL DEFAULT 10,
     interval_minutes    INTEGER,                           -- eigenes Suchintervall, leer: Einstellung
     pickup_mode         TEXT NOT NULL DEFAULT 'radius',    -- radius | all | hide
@@ -124,6 +125,7 @@ CREATE TABLE IF NOT EXISTS items (
     near            INTEGER NOT NULL DEFAULT 0,       -- abholbar im eingestellten Umkreis
     remind          INTEGER NOT NULL DEFAULT 0,       -- Knopf „1 Min vorher erinnern“ gedrückt
     reminded        INTEGER NOT NULL DEFAULT 0,       -- Erinnerung ist erledigt
+    keep            INTEGER NOT NULL DEFAULT 0,       -- Herz: Auktion auch über dem Limit verfolgen (Issue #20)
     epid            TEXT,                              -- Produkt im Katalog der Plattform (eBay: ePID)
     cond            TEXT,                              -- new | used | parts (für den Durchschnittspreis)
     first_seen      REAL NOT NULL,
@@ -147,8 +149,22 @@ CREATE TABLE IF NOT EXISTS hidden_items (
     url         TEXT,
     image       TEXT,
     hidden_at   REAL NOT NULL,
+    auto        INTEGER NOT NULL DEFAULT 0,   -- 1: von selbst ausgeblendet, weil wieder eingestellt (Issue #23)
     PRIMARY KEY (search_id, item_id)
 );
+
+-- Prüfwerte ausgeblendeter Angebote, um Neueinstellungen zu erkennen (wieder.py, Issue #23). Nur Hashes von
+-- Titel, Bildnummer und grobem Standort mit Versandkosten, keine Verkäuferdaten; nach 60 Tagen gelöscht.
+CREATE TABLE IF NOT EXISTS relist_marks (
+    id          INTEGER PRIMARY KEY,
+    search_id   INTEGER NOT NULL REFERENCES searches(id) ON DELETE CASCADE,
+    item_id     TEXT NOT NULL,
+    title_key   TEXT NOT NULL,
+    image_key   TEXT,
+    place_key   TEXT,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_relist_marks ON relist_marks(search_id, title_key);
 
 -- Vergleichsangebote für den Durchschnittspreis (siehe market.py). Sie bleiben gespeichert, auch wenn
 -- sie nicht mehr online sind, und bilden so über Monate einen Preisverlauf.
@@ -339,7 +355,7 @@ def _migrate() -> None:
     for name in ("epid", "cond", "images", "condition_text"):
         if name not in columns:
             ex(f"ALTER TABLE items ADD COLUMN {name} TEXT")
-    for name in ("remind", "reminded"):
+    for name in ("remind", "reminded", "keep"):
         if name not in columns:
             ex(f"ALTER TABLE items ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
     if "near" not in columns:
@@ -361,6 +377,12 @@ def _migrate() -> None:
         ex("ALTER TABLE searches ADD COLUMN max_results INTEGER")
     if "capped" not in _columns("searches"):
         ex("ALTER TABLE searches ADD COLUMN capped INTEGER NOT NULL DEFAULT 0")
+    # Von selbst ausgeblendet, weil wieder eingestellt (Issue #23)
+    if "auto" not in _columns("hidden_items"):
+        ex("ALTER TABLE hidden_items ADD COLUMN auto INTEGER NOT NULL DEFAULT 0")
+    # Defekte Artikel (Issue #21): bestehende Gesuche suchen sie weiter mit, neue schließen sie aus
+    if "defects" not in _columns("searches"):
+        ex("ALTER TABLE searches ADD COLUMN defects TEXT NOT NULL DEFAULT 'include'")
     # Abfragen je Konto und Plattform: Tabellen mit neuem Schlüssel anlegen. Bisherige Zahlen gelten für eBay
     # (Tabellen vor 0.3 hatten keine Plattform) und für den Admin.
     if "user_id" not in _columns("api_usage"):

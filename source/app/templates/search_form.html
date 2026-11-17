@@ -163,10 +163,23 @@
          'Außerhalb der EU können Zoll und Einfuhrumsatzsteuer dazukommen. Das steht dann in der Benachrichtigung.']) }}
   </fieldset>
 
-  <fieldset class="grid min-w-0 gap-2">
-    <legend class="{{ ui.label() }} mb-2">Zustand</legend>
-    {{ ui.segmented('condition', [('any', 'Egal'), ('new', 'Neu'), ('used', 'Gebraucht')], values.condition) }}
-  </fieldset>
+  {# Bei „Nur defekte“ spielt der Zustand keine Rolle: dann blass (CSS über :has, ohne JavaScript) #}
+  <div class="group/zustand grid gap-7.5">
+    <fieldset class="grid min-w-0 gap-2 transition-opacity group-has-[input[name=defects][value=only]:checked]/zustand:opacity-45">
+      <legend class="{{ ui.label() }} mb-2">Zustand</legend>
+      {{ ui.segmented('condition', [('any', 'Egal'), ('new', 'Neu'), ('used', 'Gebraucht')], values.condition) }}
+    </fieldset>
+
+    <fieldset class="grid min-w-0 gap-2">
+      <legend class="{{ ui.label() }} mb-2">Defekte Artikel {{ ui.info('defects') }}</legend>
+      {{ ui.segmented('defects', [('include', 'Mitsuchen'), ('exclude', 'Ausschließen'), ('only', 'Nur defekte')], values.defects) }}
+      {{ ui.info_panel('defects', 'Defekte Artikel', [
+           'Defekt heißt bei eBay: Zustand „Als Ersatzteil/defekt“. „Neu mit Fehlern“ gehört nicht dazu.',
+           'Ausschließen: Defekte Angebote erscheinen nicht und lösen keine Benachrichtigung aus.',
+           'Nur defekte: Heuhaufen sucht ausschließlich defekte Angebote, Neu oder Gebraucht spielt dann keine Rolle.',
+           'Angebote ohne Zustandsangabe zählen als nicht defekt.']) }}
+    </fieldset>
+  </div>
 
   <fieldset class="grid min-w-0 gap-2">
     <legend class="{{ ui.label() }} mb-2">Angebote nur zur Abholung {{ ui.info('pickup') }}</legend>

@@ -57,6 +57,7 @@
   --color-tight: #A3650C;         /* Bernstein: knapp am Limit, Abholung, bald zu Ende */
   --color-over: #A4473B;          /* Rot: über Limit, Fehler */
   --color-over-soft: #F6E7E4;
+  --color-heart: #D93A4A;         /* Herz: Auktion auch über dem Limit verfolgen (Issue #20) */
   --color-white: #FFFFFF;         /* nur für den Hintergrund des QR-Codes */
 
   /* Abgeleitete Farben, passen sich im Dunkelmodus automatisch an */
@@ -120,6 +121,7 @@
       --color-tight: #E3AB58;
       --color-over: #E8907F;
       --color-over-soft: #33221F;
+      --color-heart: #F06B78;
     }
   }
 }
@@ -182,5 +184,27 @@
 @media (min-width: 64rem) {
   .pswp[data-panel="open"] .pswp__button--arrow--next {
     right: 23.75rem;
+  }
+}
+
+/*
+ * Leiste oben am Handy: sechs Knöpfe (Herz, Ausblenden, Angaben, eBay, Zoom, Schließen) und der Zähler „3 / 12“.
+ * Knöpfe etwas schmaler als PhotoSwipes 50 px, damit der Zähler auch bei 360 px Breite in eine Zeile passt.
+ */
+.pswp__counter {
+  white-space: nowrap;
+}
+@media (max-width: 30rem) {
+  .pswp__top-bar .pswp__button {
+    width: 44px;
+  }
+  .pswp__top-bar .pswp__icn {
+    left: 6px;
+  }
+  .pswp__top-bar .pswp__preloader {
+    width: 28px;
+  }
+  .pswp__counter {
+    margin-inline-start: 14px;
   }
 }

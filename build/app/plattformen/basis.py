@@ -23,7 +23,8 @@ from dataclasses import dataclass
 # Wofür eine Abfrage war (Einstellungen zeigen die Abfragen danach aufgeschlüsselt). Gilt für alle Plattformen.
 PURPOSES = {"suche": "Suche nach neuen Angeboten", "endspurt": "Endspurt vor Auktionsende",
             "erinnerung": "Erinnerung 1 Min vor Ende", "durchschnitt": "Durchschnittspreis",
-            "galerie": "Galerie (Beschreibung und Gebote)", "merkmale": "Vorschläge für Artikelmerkmale"}
+            "galerie": "Galerie (Beschreibung und Gebote)", "merkmale": "Vorschläge für Artikelmerkmale",
+            "herz": "Auktionen mit Herz über dem Limit"}
 
 LISTING_FIELDS = (
     "item_id", "platform", "title", "url", "image", "images", "condition_text", "is_auction", "has_bin",
@@ -167,8 +168,9 @@ class Plattform:
         Zweiter Wert: Antwort vollständig (dann gelten fehlende Angebote als verschwunden)."""
         return [], False
 
-    def image(self, url: str | None, size: int) -> str | None:
-        """Adresse eines Bildes in der gewünschten Größe (Kantenlänge in Pixeln, soweit möglich)."""
+    def image(self, url: str | None, size: int, webp: bool = False) -> str | None:
+        """Adresse eines Bildes in der gewünschten Größe (Kantenlänge in Pixeln, soweit möglich), mit webp=True
+        im kleineren WebP-Format, falls die Plattform es anbietet."""
         return url
 
     def same_image(self, a: str, b: str) -> bool:

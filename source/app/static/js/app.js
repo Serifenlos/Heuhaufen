@@ -408,6 +408,45 @@
       .catch(function () { form.submit(); });
   }
 
+  // Herz an einer Auktion (Galerie, Issue #20): Heuhaufen meldet sich dann vor dem Ende, auch über dem Limit,
+  // und erinnert 1 Minute vorher. Der Knopf zeigt den neuen Stand sofort und nimmt ihn zurück, wenn das
+  // Speichern nicht klappt. In der Zeile erscheint bzw. verschwindet das Herz vor „Auktion“.
+  function setKeepButton(el, on) {
+    var label = on ? "Herz entfernen" : "Herz: auch über dem Limit melden";
+    var heart = el.querySelector("[data-heart]");
+    el.setAttribute("aria-pressed", String(on));
+    el.title = label;
+    el.setAttribute("aria-label", label);
+    if (heart) {
+      heart.setAttribute("fill", on ? HEART_RED : "none");
+      heart.setAttribute("stroke", on ? HEART_RED : "#fff");
+    }
+  }
+
+  function showKept(row, on) {
+    var mark = row.querySelector("[data-keep-mark]");
+    row.setAttribute("data-kept", String(on));
+    if (mark) mark.hidden = !on;
+  }
+
+  function toggleKeep(form, el) {
+    var row = form.closest("li[data-offer]");
+    var on = row.getAttribute("data-kept") !== "true";
+    form.querySelector("input[name=keep]").value = on ? "1" : "0";
+    setKeepButton(el, on);
+    showKept(row, on);
+    fetch(form.action, { method: "POST", body: new FormData(form), credentials: "same-origin",
+                         headers: { Accept: "application/json" } })
+      .then(function (response) {
+        if (!response.ok) throw new Error("HTTP " + response.status);
+      })
+      .catch(function (error) {
+        console.info("Heuhaufen: Herz nicht gespeichert (" + error.message + ")");
+        setKeepButton(el, !on);
+        showKept(row, !on);
+      });
+  }
+
   function bindHideForms(root) {
     root.querySelectorAll("form[data-hide]").forEach(function (form) {
       form.addEventListener("submit", function (event) {
@@ -444,6 +483,10 @@
   };
   // Knopf „Bei eBay öffnen“ (bzw. der Plattform) oben in der Galerie (Pfeil aus dem Kasten, 32er-Raster wie die PhotoSwipe-Symbole)
   var EBAY_ICON = '<path id="pswp__icn-ebay" d="M9 11h6v2h-4v8h8v-4h2v6H9zM17 9h6v6h-2v-2.6l-5.3 5.3-1.4-1.4 5.3-5.3H17z"/>';
+  // Herz (Issue #20): Umriss, gesetzt rot gefüllt (Farbe wie --color-heart). Ohne Schatten (outlineID), weil
+  // setKeepButton Füllung und Linie direkt am Pfad umschaltet.
+  var HEART_RED = "#D93A4A";
+  var KEEP_ICON = '<path data-heart fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round" d="M16 25.6l-1.6-1.5C8.8 19 5.3 15.8 5.3 11.8c0-3.2 2.5-5.6 5.7-5.6 1.8 0 3.6.9 5 2.3 1.4-1.4 3.2-2.3 5-2.3 3.2 0 5.7 2.4 5.7 5.6 0 4-3.5 7.2-9.1 12.3z"/>';
   var HIDE_ICON = '<g id="pswp__icn-hide"><path fill-rule="evenodd" d="M5.5 16c2.4-4.2 6-6.3 10.5-6.3s8.1 2.1 10.5 6.3c-2.4 4.2-6 6.3-10.5 6.3S7.9 20.2 5.5 16zm2.4 0c2 3 4.7 4.4 8.1 4.4s6.1-1.4 8.1-4.4c-2-3-4.7-4.4-8.1-4.4S9.9 13 7.9 16z"/><circle cx="16" cy="16" r="2.6"/><path d="M8.2 6.8l17 17-1.4 1.4-17-17z"/></g>';
   var INFO_ICON = '<path id="pswp__icn-info" fill-rule="evenodd" d="M16 6.5a9.5 9.5 0 1 1 0 19 9.5 9.5 0 0 1 0-19zm0 2a7.5 7.5 0 1 0 0 15 7.5 7.5 0 0 0 0-15zM15 14h2v7h-2zm0-3.5h2v2h-2z"/>';
   var PANEL_WIDTH = 380;                                   // w-95 in gallery_panel.html
@@ -928,6 +971,7 @@
     var links = row ? Array.prototype.slice.call(row.querySelectorAll("a[data-gallery]")) : [link];
     var thumb = row ? row.querySelector("a[data-gallery] img") : link.querySelector("img");
     var hideForm = row ? row.querySelector("form[data-hide]") : null;
+    var keepForm = row ? row.querySelector("form[data-keep]") : null;
     links.forEach(function (a) { a.setAttribute("aria-busy", "true"); });
     window.Promise.all([loadPhotoSwipe(), loadImages(link)])
       .then(function (results) {
@@ -948,6 +992,22 @@
         var pswp = new PhotoSwipe(options);
         if (results[1].panel) addPanel(pswp, results[1].panel, carry, row);
         pswp.on("uiRegister", function () {
+          if (keepForm) {
+            pswp.ui.registerElement({
+              name: "keep",
+              order: 7,   // nach dem Ladeanzeiger (7), vor Ausblenden: rechts bei den anderen Knöpfen
+              isButton: true,
+              title: "Herz: auch über dem Limit melden",
+              ariaLabel: "Herz: auch über dem Limit melden",
+              html: { isCustomSVG: true, inner: KEEP_ICON },
+              onInit: function (el) {
+                setKeepButton(el, row.getAttribute("data-kept") === "true");
+              },
+              onClick: function (event, el) {
+                toggleKeep(keepForm, el);
+              }
+            });
+          }
           if (hideForm) {
             // Ausblenden: Galerie schließen, Zeile entfernen, unten „Rückgängig“ anbieten
             pswp.ui.registerElement({

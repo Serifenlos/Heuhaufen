@@ -250,10 +250,13 @@ def condition_class(condition_id: object) -> str | None:
     return "parts" if cid == 7000 else "used"
 
 
-def image_size(url: str | None, size: int = 500) -> str | None:
-    """eBay-Bildadresse in anderer Größe: …/s-l225.jpg → …/s-l1600.jpg"""
+def image_size(url: str | None, size: int = 500, webp: bool = False) -> str | None:
+    """eBay-Bildadresse in anderer Größe: …/s-l225.jpg → …/s-l1600.jpg, mit webp=True → …/s-l1600.webp
+    (eBay rechnet jede Größe in beide Formate um; WebP ist bei gleicher Größe etwa halb so groß)."""
     if not url:
         return None
+    if webp:
+        return re.sub(r"s-l\d+\.(?:jpe?g|png|webp)", f"s-l{size}.webp", url)
     return re.sub(r"s-l\d+", f"s-l{size}", url)
 
 
@@ -473,6 +476,10 @@ class EbayPlattform(Plattform):
 
     @staticmethod
     def _condition_filter(s: dict) -> list[str]:
+        if s.get("defects") == "only":   # nur „Als Ersatzteil/defekt“ (Issue #21); Neu/Gebraucht spielt dann keine Rolle
+            return ["conditionIds:{7000}"]
+        # „ohne defekte“ filtert watcher._discover_on: Eine Liste erlaubter Zustände schlösse bei eBay auch alle
+        # Angebote ohne Zustandsangabe aus (in manchen Kategorien gibt es keine).
         if s["condition"] == "new":
             return ["conditions:{NEW}"]
         if s["condition"] == "used":
@@ -633,8 +640,8 @@ class EbayPlattform(Plattform):
 
     # ------------------------------------------------------------ Bilder, Verbindung
 
-    def image(self, url: str | None, size: int) -> str | None:
-        return image_size(url, size)
+    def image(self, url: str | None, size: int, webp: bool = False) -> str | None:
+        return image_size(url, size, webp)
 
     async def check(self, settings: dict) -> dict:
         return await self._client(settings).rate_limits()

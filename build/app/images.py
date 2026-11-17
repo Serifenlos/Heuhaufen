@@ -6,8 +6,8 @@
   Adresse ohne Login aus (ntfy auf dem Handy kann das Bild laden), lässt sich aber nicht für fremde
   Artikel oder Seiten missbrauchen. v ändert sich, wenn der Verkäufer das Bild austauscht.
 * Die Adressen der Bilder stehen in der eigenen Datenbank. Geladen wird nur von den Bild-Servern der
-  Plattformen (Plattform.image_hosts), für Listen und Benachrichtigungen in 500 px, für die Galerie in
-  1600 px (die Plattform rechnet die Adresse um, Plattform.image).
+  Plattformen (Plattform.image_hosts): für Listen und Kacheln 300 px als WebP, für Benachrichtigungen 500 px
+  als JPEG, für die Galerie 1600 px als WebP (die Plattform rechnet die Adresse um, Plattform.image).
 * Die Dateien liegen im Datenordner unter cache/bilder. Die stündliche Pflege löscht Bilder, die
   14 Tage nicht angezeigt wurden, und hält den Ordner unter 500 MB.
 * Klappt das Laden nicht, schickt Heuhaufen den Browser direkt zur Plattform (wie ohne Cache).
@@ -41,8 +41,9 @@ RETRY_SECONDS = 3600                    # nach einem Fehlschlag frühestens nach
 CLEANUP_SECONDS = 3600
 BROWSER_CACHE_SECONDS = 7 * 86400
 MAX_PARALLEL = 6                        # gleichzeitige Downloads
-THUMB_SIZE = 500                        # Listen, Karten, Benachrichtigungen
-GALLERY_SIZE = 1600                     # Galerie: so groß, wie eBay die Bilder höchstens herausgibt
+THUMB_SIZE = 500                        # Benachrichtigungen (JPEG, das zeigt jede ntfy-App)
+SMALL_SIZE = 300                        # Listen und Kacheln, als WebP: etwa ein Drittel der Daten von 500 px JPEG
+GALLERY_SIZE = 1600                     # Galerie, als WebP: so groß, wie eBay die Bilder höchstens herausgibt
 
 _http: httpx.AsyncClient | None = None
 _locks: dict[str, asyncio.Lock] = {}
@@ -53,13 +54,15 @@ _last_cleanup = 0.0
 
 # ---------------------------------------------------------------- Adressen
 
-def url(search_id: int | None, item_id: str | None, image: str | None, n: int = 0, big: bool = False) -> str | None:
+def url(search_id: int | None, item_id: str | None, image: str | None, n: int = 0, big: bool = False,
+        small: bool = False) -> str | None:
     """Adresse eines Artikelbildes in Heuhaufen, z. B. /bild/3/v1%7C1234%7C0?v=…&s=…
-    n: Nummer des Bildes (0 = Hauptbild), big: groß für die Galerie."""
+    n: Nummer des Bildes (0 = Hauptbild), big: groß für die Galerie, small: klein für Listen und Kacheln.
+    Ohne beides: mittelgroß als JPEG für die Benachrichtigungen."""
     if not image or search_id is None or not item_id:
         return None
     version = hashlib.sha256(image.encode()).hexdigest()[:8]
-    extra = (f"&n={n}" if n else "") + ("&g=1" if big else "")
+    extra = (f"&n={n}" if n else "") + ("&g=1" if big else "&k=1" if small else "")
     return (f"/bild/{search_id}/{quote(str(item_id), safe='')}"
             f"?v={version}&s={signed.sign(search_id, item_id)}{extra}")
 
@@ -91,12 +94,13 @@ def _platform(search_id: int, item_id: str):
     return plattformen.get(row["platform"] if row else None)
 
 
-def source(search_id: int, item_id: str, n: int = 0, big: bool = False) -> str | None:
-    """Adresse eines Bildes bei der Plattform, in der Größe, in der Heuhaufen es lädt."""
+def source(search_id: int, item_id: str, n: int = 0, big: bool = False, small: bool = False) -> str | None:
+    """Adresse eines Bildes bei der Plattform, in der Größe und dem Format, in dem Heuhaufen es lädt."""
     found = originals(search_id, item_id)
     if not 0 <= n < len(found):
         return None
-    return _platform(search_id, item_id).image(found[n], GALLERY_SIZE if big else THUMB_SIZE)
+    size = GALLERY_SIZE if big else SMALL_SIZE if small else THUMB_SIZE
+    return _platform(search_id, item_id).image(found[n], size, webp=big or small)
 
 
 def allowed(address: str) -> bool:

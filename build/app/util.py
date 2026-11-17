@@ -28,6 +28,21 @@ COUNTRY_NAMES = {
 FORMAT_LABEL = {"auction": "Auktion", "fixed": "Sofortkauf", "both": "Auktion und Sofortkauf"}
 LOCATION_LABEL = {"DE": "aus Deutschland", "EU": "aus der EU", "WORLD": "weltweit"}
 CONDITION_LABEL = {"any": "", "new": "neu", "used": "gebraucht"}
+# Defekte Artikel (Issue #21). Defekt heißt: „Als Ersatzteil/defekt“ (cond = parts, siehe plattformen/ebay.py)
+DEFECTS_LABEL = {"include": "", "exclude": "ohne defekte", "only": "nur defekte"}
+DEFECTS_DEFAULT = "exclude"   # für neue Gesuche
+
+
+def defects_ok(search: dict, item: dict) -> bool:
+    """Passt das Angebot zur Einstellung „Defekte Artikel“ des Gesuchs? Ohne Zustandsangabe gilt es als
+    nicht defekt."""
+    mode = search.get("defects") or "include"
+    broken = item.get("cond") == "parts"
+    if mode == "exclude":
+        return not broken
+    if mode == "only":
+        return broken
+    return True
 WEEKDAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
 
 
@@ -129,9 +144,12 @@ def short(text: str, n: int = 70) -> str:
 
 def describe_search(s: dict) -> str:
     parts = [f"{FORMAT_LABEL.get(s['format'], '')} {LOCATION_LABEL.get(s['location'], '')}".strip()]
-    cond = CONDITION_LABEL.get(s.get("condition") or "any")
+    defects = s.get("defects") or "include"
+    cond = CONDITION_LABEL.get(s.get("condition") or "any") if defects != "only" else ""
     if cond:
         parts.append(cond)
+    if DEFECTS_LABEL.get(defects):
+        parts.append(DEFECTS_LABEL[defects])
     if s.get("free_shipping_only"):
         parts.append("nur versandkostenfrei")
     if s.get("interval_minutes"):
@@ -266,6 +284,11 @@ def image_count(item: dict) -> int:
     return len(found) if isinstance(found, list) and found else (1 if item.get("image") else 0)
 
 
+def kept(v: dict) -> bool:
+    """Auktion mit Herz (Issue #20): Heuhaufen verfolgt sie auch über dem Limit und meldet sich vor dem Ende."""
+    return bool(v.get("keep")) and bool(v.get("auction"))
+
+
 def ending_first(v: dict) -> tuple:
     """Voreingestellte Sortierung „Endet zuerst“: nach Endzeit, Angebote ohne Endzeit zuletzt, dann nach Preis."""
     return (v.get("end_time") is None, v.get("end_time") or 0, v.get("total") or 0)
@@ -293,7 +316,8 @@ def search_overview(search: dict, items: list[dict], now: float, hidden: set[str
         if i["status"] == "active" and (not i["end_time"] or i["end_time"] > now)
         and i["item_id"] not in hidden
     ]
-    within = [v for v in views if v["within"]]
+    # Treffer: unter dem Limit, dazu Auktionen mit Herz, auch wenn sie inzwischen darüber liegen (Issue #20)
+    within = [v for v in views if v["within"] or kept(v)]
     auctions = sorted((v for v in within if v["auction"] and v["end_time"]), key=lambda v: v["end_time"])
     fixed = sorted((v for v in within if not v["auction"]), key=lambda v: v["total"] or 0)
     feature = auctions[0] if auctions else (fixed[0] if fixed else None)
@@ -303,7 +327,7 @@ def search_overview(search: dict, items: list[dict], now: float, hidden: set[str
         "description": describe_search(search),
         "limit": limit_text(search),
         "matches": sorted(within, key=ending_first),
-        "over": sorted((v for v in views if not v["within"]), key=ending_first),
+        "over": sorted((v for v in views if not v["within"] and not kept(v)), key=ending_first),
         "hidden_count": len(hidden),
         "has_distance": any(v.get("distance_km") is not None for v in within),
         "feature": feature,
@@ -340,6 +364,8 @@ def hidden_view(row: dict, item: dict | None, search: dict, now: float) -> dict:
             "platform": row.get("platform"), "platform_name": plattformen.get(row.get("platform")).name,
         }
     view["hidden_at"] = row["hidden_at"]
+    if row.get("auto"):   # Issue #23
+        view["flags"] = [*view.get("flags", []), "Wieder eingestellt, von selbst ausgeblendet"]
     return view
 
 

@@ -12,12 +12,13 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from urllib.parse import quote, urlencode
 
+from starlette.middleware.gzip import GZipMiddleware
 from starlette.requests import Request
 from starlette.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.staticfiles import StaticFiles
 from starlette.templating import Jinja2Templates
 
-from . import auth, config, db, details, images, kategorien, market, netz, notify, signed, util
+from . import auth, config, db, details, images, kategorien, market, netz, notify, signed, util, wieder
 from .plattformen import liste as plattformen
 from .plattformen.basis import PURPOSES, RESULT_STEPS, PlatformError, result_limit
 from .watcher import Watcher
@@ -36,6 +37,7 @@ async def lifespan(_app: App):
     db.init()
     auth.ensure_admin()
     db.adopt_owner_data()   # alles, was noch keinem Konto gehört, dem Admin geben
+    wieder.adopt_existing()  # schon ausgeblendete Angebote für die Erkennung von Neueinstellungen vormerken
     plattformen.adopt_from_environment(dict(os.environ), log)
     watcher.start()
     log.info("Heuhaufen %s läuft.", config.APP_VERSION)
@@ -47,7 +49,21 @@ async def lifespan(_app: App):
 
 
 app = App(lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+class Assets(StaticFiles):
+    """Dateien aus static/. Mit Versionskennung in der Adresse (?v=…, siehe asset()) behält der Browser sie ein
+    Jahr, ohne nachzufragen: Ändert sich die Datei, ändert sich die Adresse. Ohne Kennung fragt er jedes Mal
+    nach und bekommt bei Gleichstand nur „unverändert“ (304)."""
+
+    def file_response(self, full_path, stat_result, scope, status_code: int = 200) -> Response:
+        resp = super().file_response(full_path, stat_result, scope, status_code)
+        versioned = any(part.startswith(b"v=") for part in scope.get("query_string", b"").split(b"&"))
+        resp.headers["Cache-Control"] = "public, max-age=31536000, immutable" if versioned else "no-cache"
+        return resp
+
+
+app.mount("/static", Assets(directory=STATIC_DIR), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 _asset_versions: dict[str, tuple[float, str]] = {}
@@ -68,9 +84,9 @@ def asset(path: str) -> str:
     return f"/static/{path}?v={cached[1]}"
 
 
-def image_url(v: dict) -> str | None:
-    """Adresse des Artikelbildes im eigenen Bild-Cache (siehe images.py)."""
-    return images.url(v.get("search_id"), v.get("item_id"), v.get("image"))
+def image_url(v: dict, small: bool = True) -> str | None:
+    """Adresse des Artikelbildes im eigenen Bild-Cache (siehe images.py), auf den Seiten klein (300 px WebP)."""
+    return images.url(v.get("search_id"), v.get("item_id"), v.get("image"), small=small)
 
 
 def gallery_url(v: dict) -> str:
@@ -104,6 +120,8 @@ MESSAGES = {
     "market": "Gespeichert. Neue Vergleichsangebote holt Heuhaufen in den nächsten Minuten.",
     "display": "Gespeichert.",
     "unhidden": "Angebot wieder eingeblendet.",
+    "kept": "Gemerkt: Heuhaufen meldet sich vor dem Ende, auch über dem Limit.",
+    "unkept": "Herz entfernt.",
     "logout": "Du bist abgemeldet.",
     "email": "E-Mail-Adresse gespeichert.",
     "welcome": "Willkommen bei Heuhaufen! Trage zuerst deine eBay-Zugangsdaten ein.",
@@ -197,6 +215,8 @@ def reload_url(request: Request) -> str:
 def render(request: Request, name: str, status_code: int = 200, **ctx) -> HTMLResponse:
     sess = getattr(request.state, "session", None)
     ctx.setdefault("csrf", sess["csrf"] if sess else "")
+    if ctx["csrf"]:   # jede Seite mit anders verpacktem Token (auth.mask_csrf), wegen gzip
+        ctx["csrf"] = auth.mask_csrf(ctx["csrf"])
     ctx.setdefault("flash_ok", MESSAGES.get(request.query_params.get("ok", "")))
     ctx.setdefault("flash_err", MESSAGES.get(request.query_params.get("err", "")))
     ctx.setdefault("active", "")
@@ -253,8 +273,12 @@ def back(path: str, key: str | None = None, err: bool = False, anchor: str = "")
 
 # ---------------------------------------------------------------- Middleware
 
+SLOW_SECONDS = 0.5   # langsamere Anfragen stehen im Protokoll des Containers
+
+
 @app.middleware("http")
 async def guard(request: Request, call_next):
+    started = time.perf_counter()
     request.state.session = None
     path = request_path(request)
     request.state.user = None
@@ -283,10 +307,20 @@ async def guard(request: Request, call_next):
         set_cookie(resp, request, auth.SESSION_COOKIE, legacy,
                    max_age=max(60, remaining) if request.state.session["remember"] else None)
         resp.delete_cookie(auth.LEGACY_SESSION_COOKIE, path="/")
+    elapsed = time.perf_counter() - started
+    if request.state.session is not None:
+        # Wie lange Heuhaufen selbst gebraucht hat. Steht in den Entwicklertools des Browsers (Netzwerk →
+        # Timing): Der Rest der Ladezeit ist das Netz. Nur für Angemeldete.
+        resp.headers["Server-Timing"] = f"app;dur={elapsed * 1000:.1f}"
+    if elapsed > SLOW_SECONDS:
+        log.info("Langsam: %s %s brauchte %.2f s", request.method, path, elapsed)
     return _with_headers(resp)
 
 
-# Reihenfolge von außen nach innen: Proxy-Angaben prüfen, Größe begrenzen, dann guard (Anmeldung)
+# Reihenfolge von außen nach innen: Proxy-Angaben prüfen, Größe begrenzen, komprimieren, dann guard (Anmeldung).
+# gzip packt Seiten, CSS, JS und JSON auf etwa ein Viertel, Bilder nicht (die sind schon gepackt). Gegen das
+# Erraten von Geheimnissen über die Größe (BREACH) steht das Formular-Token jedes Mal anders da (auth.mask_csrf).
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 app.add_middleware(netz.BodyLimit)
 app.add_middleware(netz.TrustedProxy)
 
@@ -327,7 +361,7 @@ async def article_image(request: Request, sid: int, item_id: str):
     n = request.query_params.get("n", "0")
     if not n.isdigit():
         return PlainTextResponse("Bild nicht gefunden.", 404)
-    address = images.source(sid, item_id, int(n), request.query_params.get("g") == "1")
+    address = images.source(sid, item_id, int(n), request.query_params.get("g") == "1", request.query_params.get("k") == "1")
     if not address or not images.allowed(address):
         return PlainTextResponse("Bild nicht gefunden.", 404)
     path = await images.cached(address)
@@ -535,10 +569,7 @@ async def dashboard(request: Request):
         for s in searches
     ]
     overviews.sort(key=util.dashboard_order)
-    # „Als Nächstes endet“: die nächsten Auktionen unter dem Limit über alle aktiven Gesuche (Issue #14)
-    upcoming = sorted(((v, o) for o in overviews if o["active"] for v in o["matches"] if v["auction"] and v["end_time"]),
-                      key=lambda pair: pair[0]["end_time"])[:4]
-    return render(request, "dashboard.html", active="searches", searches=overviews, upcoming=upcoming,
+    return render(request, "dashboard.html", active="searches", searches=overviews,
                   notices=_notices(request), last_tick=watcher.last_tick, now=now)
 
 
@@ -599,6 +630,7 @@ def _form_defaults(settings: dict) -> dict:
     return {
         "name": "", "query": "", "exclude": "", "format": "auction", "location": "DE",
         "max_price_raw": "", "incl_shipping": 1, "free_shipping_only": 0, "condition": "any",
+        "defects": util.DEFECTS_DEFAULT,
         "lead_raw": str(db.setting_int(settings, "lead_minutes", 10)), "interval_raw": "",
         "pickup_mode": "radius", "active": 1, "categories": "", "aspects": "", "aspect_rows": [],
         "max_results": result_limit({}, settings),
@@ -624,6 +656,7 @@ def _parse_search_form(form) -> tuple[dict, dict]:
         "format": pick("format", util.FORMAT_LABEL, "auction"),
         "location": pick("location", util.LOCATION_LABEL, "DE"),
         "condition": pick("condition", util.CONDITION_LABEL, "any"),
+        "defects": pick("defects", util.DEFECTS_LABEL, util.DEFECTS_DEFAULT),
         "pickup_mode": pick("pickup_mode", ("radius", "all", "hide"), "radius"),
         "incl_shipping": 1 if form.get("incl_shipping") else 0,
         "free_shipping_only": 1 if form.get("free_shipping_only") else 0,
@@ -636,6 +669,8 @@ def _parse_search_form(form) -> tuple[dict, dict]:
     }
     v["aspects"], v["aspect_rows"], aspect_error = kategorien.parse_aspects(form.getlist("aspect_name")[:30],
                                                                             form.getlist("aspect_value")[:30])
+    if v["defects"] == "only":   # nur defekte: Neu oder Gebraucht spielt keine Rolle
+        v["condition"] = "any"
     errors = {}
     # Ohne Suchbegriff geht es mit Kategorie (Issue #15), aber nicht in einer Hauptkategorie: Da verlangt eBay
     # einen Suchbegriff (Fehler 12013).
@@ -671,7 +706,7 @@ def _parse_search_form(form) -> tuple[dict, dict]:
 
 
 SEARCH_COLUMNS = ["name", "query", "exclude", "format", "location", "max_price", "incl_shipping",
-                  "free_shipping_only", "condition", "lead_minutes", "interval_minutes", "pickup_mode", "active",
+                  "free_shipping_only", "condition", "defects", "lead_minutes", "interval_minutes", "pickup_mode", "active",
                   "categories", "aspects", "max_results"]
 
 
@@ -765,6 +800,7 @@ async def hide_item(request: Request, sid: int):
         "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(search_id, item_id) DO NOTHING",
         (sid, item_id, item["platform"], item["title"], item["url"], item["image"], time.time()),
     )
+    wieder.remember(sid, item)   # Neueinstellungen dieses Angebots 60 Tage lang ebenfalls ausblenden (Issue #23)
     return back(f"/searches/{sid}", "hidden", anchor="treffer")
 
 
@@ -774,8 +810,37 @@ async def unhide_item(request: Request, sid: int):
     item_id = str(form.get("item_id", ""))[:100]
     if not own_search(request, sid):
         return not_found(request)
+    copy = db.q1("SELECT * FROM hidden_items WHERE search_id = ? AND item_id = ?", (sid, item_id))
+    item = db.q1("SELECT * FROM items WHERE search_id = ? AND item_id = ?", (sid, item_id))
+    if copy or item:   # zurückgeholt: auch nicht mehr als Neueinstellung ausblenden (Issue #23)
+        wieder.forget(sid, item or {**copy, "location_text": None})
     db.ex("DELETE FROM hidden_items WHERE search_id = ? AND item_id = ?", (sid, item_id))
     return back(f"/searches/{sid}", "unhidden", anchor="treffer")
+
+
+@app.post("/searches/{sid:nr}/herz")
+async def keep_item(request: Request, sid: int):
+    """Herz an einer Auktion (Issue #20, Knopf in der Galerie): Heuhaufen verfolgt sie auch über dem Limit,
+    meldet sich vor dem Ende und erinnert 1 Minute vorher. keep=1 setzt das Herz, keep=0 nimmt es weg
+    (samt Erinnerung)."""
+    form = await checked_form(request)
+    item_id = str(form.get("item_id", ""))[:100]
+    s = own_search(request, sid)
+    item = db.q1("SELECT * FROM items WHERE search_id = ? AND item_id = ?", (sid, item_id)) if s else None
+    if not item or not util.is_auction_for(item, s):
+        return not_found(request)
+    on = form.get("keep") == "1"
+    if on:
+        remind = bool(item["end_time"] and item["end_time"] - time.time() > Watcher.REMIND_BEFORE + 10)
+        db.ex("UPDATE items SET keep = 1, remind = CASE WHEN ? THEN 1 ELSE remind END, "
+              "reminded = CASE WHEN ? THEN 0 ELSE reminded END WHERE search_id = ? AND item_id = ?",
+              (remind, remind, sid, item_id))
+    else:
+        db.ex("UPDATE items SET keep = 0, remind = 0 WHERE search_id = ? AND item_id = ?", (sid, item_id))
+    watcher.poke()
+    if "application/json" in request.headers.get("accept", ""):   # aus der Galerie (app.js)
+        return JSONResponse({"keep": on}, headers={"Cache-Control": "no-store"})
+    return back(f"/searches/{sid}", "kept" if on else "unkept", anchor="treffer")
 
 
 @app.get("/searches/{sid:nr}/edit")

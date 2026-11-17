@@ -291,8 +291,35 @@ def destroy_other_sessions(user_id: int, keep_hash: str | None) -> None:
     db.ex("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?", (user_id, keep_hash or ""))
 
 
+def mask_csrf(token: str) -> str:
+    """Formular-Token für die Seite, bei jeder Ausgabe anders verpackt: zufällige Maske + (Token XOR Maske).
+    Heuhaufen komprimiert seine Seiten (gzip). Stünde das Token immer gleich im Text, ließe es sich über die
+    Größe komprimierter Antworten erraten (BREACH). So steht es in keiner Antwort zweimal gleich da."""
+    raw = token.encode()
+    mask = secrets.token_bytes(len(raw))
+    return base64.urlsafe_b64encode(mask + bytes(a ^ b for a, b in zip(raw, mask))).decode().rstrip("=")
+
+
+def _unmask_csrf(sent: str) -> str | None:
+    try:
+        data = base64.urlsafe_b64decode(sent + "=" * (-len(sent) % 4))
+    except (ValueError, TypeError):
+        return None
+    half = len(data) // 2
+    if not data or len(data) % 2:
+        return None
+    try:
+        return bytes(a ^ b for a, b in zip(data[half:], data[:half])).decode()
+    except UnicodeDecodeError:
+        return None
+
+
 def csrf_ok(sent: object, expected: str | None) -> bool:
-    return bool(expected) and isinstance(sent, str) and secrets.compare_digest(sent, expected)
+    """Passt das gesendete Formular-Token (verpackt, siehe mask_csrf) zum erwarteten?"""
+    if not expected or not isinstance(sent, str) or len(sent) > 200:
+        return False
+    unmasked = _unmask_csrf(sent)
+    return unmasked is not None and secrets.compare_digest(unmasked.encode(), expected.encode())
 
 
 # ---------------------------------------------------------------- Zwei-Faktor (TOTP)

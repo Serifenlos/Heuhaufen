@@ -22,7 +22,7 @@ import logging
 import time
 from urllib.parse import quote
 
-from . import db, details, images, kategorien, market, notify, signed, util
+from . import db, details, images, kategorien, market, notify, signed, util, wieder
 from .plattformen import liste as plattformen
 from .plattformen.basis import Plattform, PlatformError
 
@@ -31,6 +31,8 @@ log = logging.getLogger("heuhaufen")
 TICK_SECONDS = 30
 MAX_SINGLE_PUSHES = 5          # mehr neue Sofortkauf-Treffer auf einmal -> eine Sammelnachricht
 MAX_END_LOOKUPS = 15           # fehlende Endzeiten pro Lauf über die Einzelabfrage nachladen
+MAX_KEEP_REFRESH = 10          # Auktionen mit Herz, die die Suche nicht findet: so viele je Lauf einzeln holen
+HEART = "\u2764\ufe0f "           # ❤️ vor dem Titel der Benachrichtigung bei Auktionen mit Herz (Issue #20)
 MARKET_EVERY = 300             # Durchschnittspreis: alle 5 Minuten nachsehen, ob etwas zu holen ist …
 MARKET_LOOKUPS_PER_RUN = 3     # … und dann höchstens so viele gezielte Abfragen auf einmal
 
@@ -138,6 +140,7 @@ class Watcher:
         self.last_tick = time.time()
         self._settings = {}
         db.prune()
+        wieder.prune()
         images.cleanup_if_due()
         await self.check_endings()
         await self.check_reminders()
@@ -225,7 +228,17 @@ class Watcher:
             title = data["title"].lower()
             if any(word in title for word in excluded):
                 continue
+            if not util.defects_ok(s, data):   # „Defekte Artikel“ (Issue #21); so auch, wenn die Plattform nicht filtert
+                continue
             seen.add(item_id)
+
+            if not existing and item_id not in hidden and wieder.matches(s["id"], {**data, "item_id": item_id}, now):
+                # Neueinstellung eines ausgeblendeten Angebots (Issue #23): gleich mit ausblenden, nie melden
+                db.ex("INSERT INTO hidden_items(search_id, item_id, platform, title, url, image, hidden_at, auto) "
+                      "VALUES (?, ?, ?, ?, ?, ?, ?, 1) ON CONFLICT(search_id, item_id) DO NOTHING",
+                      (s["id"], item_id, data["platform"], data["title"], data["url"], data["image"], now))
+                hidden.add(item_id)
+                log.info("Gesuch %s: %s ist wieder eingestellt, ausgeblendet.", s["id"], item_id)
 
             if existing:
                 if data["end_time"] is None:
@@ -248,11 +261,23 @@ class Watcher:
 
         # Nicht mehr gefunden: über Limit, beendet oder Filter geändert. Abholangebote prüft erst die
         # nächste Abholsuche. Nur Angebote dieser Plattform, die anderen hat sie nicht gesucht.
-        for row in db.q("SELECT item_id, pickup FROM items WHERE search_id = ? AND platform = ? AND status = 'active'",
+        # Auktionen mit Herz (Issue #20) bleiben: Die Suche findet sie über dem Limit nicht mehr, also holt
+        # Heuhaufen ihren Stand einzeln (je eine Abfrage).
+        kept_missing = []
+        for row in db.q("SELECT * FROM items WHERE search_id = ? AND platform = ? AND status = 'active'",
                         (s["id"], p.key)):
-            if row["item_id"] not in seen and not (keep_pickup and row["pickup"]):
-                db.ex("UPDATE items SET status = 'dropped' WHERE search_id = ? AND item_id = ?",
-                      (s["id"], row["item_id"]))
+            if row["item_id"] in seen or (keep_pickup and row["pickup"]):
+                continue
+            if row["keep"] and row["is_auction"] and row["end_time"] and row["end_time"] > now:
+                kept_missing.append(row)
+                continue
+            db.ex("UPDATE items SET status = 'dropped' WHERE search_id = ? AND item_id = ?", (s["id"], row["item_id"]))
+        for row in kept_missing[:MAX_KEEP_REFRESH]:
+            try:
+                await self._fresh_item(row, settings, "herz")
+            except PlatformError as e:
+                log.info("Auktion mit Herz %s: %s", row["item_id"], e)
+                break
 
         # Manche Suchergebnisse liefern bei Auktionen keine Endzeit mit
         for item_id in missing_end[:MAX_END_LOOKUPS]:
@@ -311,7 +336,8 @@ class Watcher:
                 continue  # Endzeit hat sich verschoben: später prüfen
 
             view = util.item_view(item, s, now)
-            if view["within"] and notify.configured(settings):
+            wanted = view["within"] or util.kept(view)   # mit Herz auch über dem Limit (Issue #20)
+            if wanted and notify.configured(settings):
                 try:
                     await notify.send(settings, **self._auction_push(s, view, settings))
                 except notify.NtfyError as e:
@@ -320,7 +346,7 @@ class Watcher:
                 self._ntfy_result(settings)
             db.ex(
                 "UPDATE items SET end_checked = 1, notified_end = ? WHERE search_id = ? AND item_id = ?",
-                (1 if view["within"] else 0, *key),
+                (1 if wanted else 0, *key),
             )
 
     async def refresh(self, row: dict, settings: dict) -> dict | None:
@@ -399,21 +425,22 @@ class Watcher:
         name = util.short(util.search_title(s), 40)
         bids = v["bid_count"] or 0
         price = f"{self._price_line(v, 'Aktuell', settings)}, {bids} {'Gebot' if bids == 1 else 'Gebote'}"
-        if not v["within"]:
+        heart = util.kept(v)
+        if not v["within"] and not heart:
             return {   # still: Preis inzwischen über dem Limit
                 "title": f"Nicht mehr unter Limit: {name}",
                 "message": "\n".join([util.short(v["title"], 120), *self._condition_line(v), price, util.limit_text(s)]),
                 "click": v["url"], "priority": 2, "tags": ["chart_with_upwards_trend"],
             }
         lines = [util.short(v["title"], 120), *self._condition_line(v), price, *self._market_line(s, v, settings),
-                 util.limit_text(s), *v["flags"]]
+                 *self._over_line(v), util.limit_text(s), *v["flags"]]
         return {
-            "title": f"Letzte Minute: {name}",
+            "title": f"{HEART}Letzte Minute: {name}" if heart else f"Letzte Minute: {name}",
             "message": "\n".join(lines),
             "click": v["url"],
             "image": self._image(settings, s, v),
             "priority": 5,
-            "tags": ["rotating_light", "alarm_clock"],
+            "tags": [] if heart else ["rotating_light", "alarm_clock"],   # mit Herz steht ❤️ vorn, sonst 🚨⏰
             "actions": [{"action": "view", "label": f"Jetzt bei {plattformen.of_item(v).name} bieten",
                          "url": v["url"], "clear": True}],
         }
@@ -588,25 +615,33 @@ class Watcher:
         m = market.Comparison(s, settings, [v]).compare(v)
         return [f"Ø {util.eur(m['median'])} ({m['delta_text']})"] if m else []
 
+    @staticmethod
+    def _over_line(v: dict) -> list[str]:
+        return [] if v["within"] else ["Über deinem Limit"]
+
     def _auction_push(self, s: dict, v: dict, settings: dict) -> dict:
         minutes = max(1, round((v["ends_in"] or 0) / 60))
         bids = v["bid_count"] or 0
+        heart = util.kept(v)
         lines = [
             util.short(v["title"], 120),
             *self._condition_line(v),
             f"{self._price_line(v, 'Aktuell', settings)}, {bids} {'Gebot' if bids == 1 else 'Gebote'}",
             *self._market_line(s, v, settings),
+            *self._over_line(v),
             util.limit_text(s),
             *v["flags"],
         ]
+        title = f"Noch {minutes} Min: {util.short(util.search_title(s), 40)}"
         return {
-            "title": f"Noch {minutes} Min: {util.short(util.search_title(s), 40)}",
+            "title": HEART + title if heart else title,
             "message": "\n".join(lines),
             "click": v["url"],
             "image": self._image(settings, s, v),
             "priority": 4,   # hoch; dringend (5) bleibt der Erinnerung 1 Minute vor Ende vorbehalten
-            "tags": ["hourglass_flowing_sand"],
-            "actions": self._actions(settings, s, v, remind=s["lead_minutes"] * 60 > self.REMIND_BEFORE + 60),
+            "tags": [] if heart else ["hourglass_flowing_sand"],   # mit Herz steht ❤️ vorn, sonst ⏳
+            # Mit Herz ist die Erinnerung 1 Minute vorher schon gesetzt, der Knopf dafür entfällt
+            "actions": self._actions(settings, s, v, remind=not heart and s["lead_minutes"] * 60 > self.REMIND_BEFORE + 60),
         }
 
     def _fixed_push(self, s: dict, v: dict, settings: dict) -> dict:
