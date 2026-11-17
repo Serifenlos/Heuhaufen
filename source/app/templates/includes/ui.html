@@ -133,7 +133,8 @@ font-num tabular-nums
 {#
   Restlaufzeit „endet in 8h54 (um 7:23 Uhr)“. app.js hält die Zeit aktuell (data-end, data-left), in der
   letzten Stunde hervorgehoben (data-soon), unter seconds (Erinnerung des Gesuchs) mit Sekunden. cap: „Endet“.
-  Müsste die Zeile umbrechen oder würde sie abgeschnitten, lässt app.js „endet“ weg: „in 2 Tagen 7h13 (…)“.
+  Müsste die Zeile umbrechen oder würde sie abgeschnitten, kürzt app.js in zwei Stufen: erst ohne „endet“
+  („in 3 Tagen 1h33 (Fr. um 16:51 Uhr)“), dann knapp („in 3d 1h33 – Fr um 16:51“, data-clock-short).
   Dazu trägt die Zeile, in der die Restzeit steht, data-fit (z. B. includes/offer.html).
 #}
 {% macro countdown_span(end_time, now, seconds=600, cap=false) -%}
@@ -141,7 +142,7 @@ font-num tabular-nums
 <span data-end="{{ end_time|int }}" data-seconds="{{ seconds|int }}"{% if cap %} data-cap{% endif %}>
   {%- if left > 0 %}{{ endet_in(cap) }} {{ left_time(end_time, now, seconds) }}
   {%- else %}{{ 'Beendet' if cap else 'beendet' }}{% endif -%}
-</span> <span class="whitespace-nowrap">({{ end_clock(end_time, now) }})</span>
+</span> <span class="whitespace-nowrap" data-clock>({{ end_clock(end_time, now) }})</span><span class="whitespace-nowrap" data-clock-short hidden>– {{ end_clock(end_time, now, short=True) }}</span>
 {%- endmacro %}
 
 {#

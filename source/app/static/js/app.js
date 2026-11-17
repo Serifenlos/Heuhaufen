@@ -26,17 +26,19 @@
   // ------------------------------------------------------------------
   // Restlaufzeiten aktuell halten (ui.countdown_span), gleiche Regeln wie util.countdown:
   // „8h54“, ab einem Tag „1 Tag 3h20“ bzw. „2 Tagen 3h20“, unter data-seconds (Erinnerung des Gesuchs) „0h09:42“.
+  // In engen Zeilen (data-compact, siehe fitLine) knapp: „2d 3h20“.
   // In der letzten Stunde bekommt die Zeit data-soon, das die Klassen data-soon:… hervorheben.
 
   function pad(n) {
     return (n < 10 ? "0" : "") + n;
   }
 
-  function format(left, secondsBelow) {
+  function format(left, secondsBelow, compact) {
     var days = Math.floor(left / 86400);
     var rest = left % 86400;
     var hours = Math.floor(rest / 3600);
     var minutes = Math.floor((rest % 3600) / 60);
+    if (days >= 1 && compact) return days + "d " + hours + "h" + pad(minutes);
     if (days >= 1) return days + (days === 1 ? " Tag " : " Tagen ") + hours + "h" + pad(minutes);
     if (left < secondsBelow) return hours + "h" + pad(minutes) + ":" + pad(rest % 60);
     return hours + "h" + pad(minutes);
@@ -52,7 +54,7 @@
         return;
       }
       if (!time) return;
-      var text = format(left, Number(el.dataset.seconds) || 600);
+      var text = format(left, Number(el.dataset.seconds) || 600, !!el.closest("[data-compact]"));
       if (time.textContent !== text) {
         var resized = time.textContent.length !== text.length;
         time.textContent = text;
@@ -63,24 +65,42 @@
     });
   }
 
-  // Wird eine Zeile mit „endet in …“ zu knapp (sie müsste umbrechen oder würde abgeschnitten), entfällt
-  // „endet“: „in 2 Tagen 7h13“ (ui.endet_in, die Zeile trägt data-fit). Gemessen wird, sobald die Zeile zu
-  // sehen ist und wenn sich ihre Breite ändert (ResizeObserver), außerdem wenn die Zeit länger oder kürzer wird.
-  function shorten(line, short) {
-    line.querySelectorAll("[data-endet]").forEach(function (word) { word.hidden = short; });
-    line.querySelectorAll("[data-cap-in]").forEach(function (word) { word.textContent = short ? "In" : "in"; });
+  // Wird eine Zeile mit der Restzeit zu knapp (sie müsste umbrechen oder würde abgeschnitten), kürzt sie sich
+  // in zwei Stufen (die Zeile trägt data-fit):
+  //   1. ohne „endet“: „in 3 Tagen 1h33 (Fr. um 16:51 Uhr)“ (ui.endet_in)
+  //   2. knapp: „in 3d 1h33 – Fr um 16:51“ (data-compact, Uhrzeit aus data-clock-short)
+  // Gemessen wird, sobald die Zeile zu sehen ist und wenn sich ihre Breite ändert (ResizeObserver), außerdem
+  // wenn die Zeit länger oder kürzer wird.
+  function shorten(line, level) {
+    line.querySelectorAll("[data-endet]").forEach(function (word) { word.hidden = level >= 1; });
+    line.querySelectorAll("[data-cap-in]").forEach(function (word) { word.textContent = level >= 1 ? "In" : "in"; });
+    line.toggleAttribute("data-compact", level >= 2);
+    line.querySelectorAll("[data-clock]").forEach(function (clock) { clock.hidden = level >= 2; });
+    line.querySelectorAll("[data-clock-short]").forEach(function (clock) { clock.hidden = level < 2; });
+    line.querySelectorAll("[data-end]").forEach(function (el) {
+      var time = el.querySelector("[data-left]");
+      var left = Math.floor(Number(el.dataset.end) - Date.now() / 1000);
+      if (time && left > 0) time.textContent = format(left, Number(el.dataset.seconds) || 600, level >= 2);
+    });
+  }
+
+  // Genau messen (Bruchteile von Pixeln): scrollWidth rundet, dann bricht eine Zeile um, die angeblich passt.
+  function tooWide(line, room) {
+    var wrap = line.style.whiteSpace;
+    var range = document.createRange();
+    line.style.whiteSpace = "nowrap";   // so lang wäre die Zeile ohne Umbruch
+    range.selectNodeContents(line);
+    var wide = range.getBoundingClientRect().width > room + 0.05;
+    line.style.whiteSpace = wrap;
+    return wide;
   }
 
   function fitLine(line) {
-    if (!line.querySelector("[data-endet]")) return;
-    shorten(line, false);
-    var room = line.clientWidth;
+    if (!line.querySelector("[data-endet], [data-left]")) return;
+    shorten(line, 0);
+    var room = line.getBoundingClientRect().width;
     if (!room) return;   // gerade nicht zu sehen (andere Seite, zugeklappt)
-    var wrap = line.style.whiteSpace;
-    line.style.whiteSpace = "nowrap";   // so lang wäre die Zeile ohne Umbruch
-    var tight = line.scrollWidth > room + 1;
-    line.style.whiteSpace = wrap;
-    if (tight) shorten(line, true);
+    for (var level = 1; level <= 2 && tooWide(line, room); level++) shorten(line, level);
   }
 
   // Beobachtet werden die Zeile und ihr Elternelement: Ist die Zeile nur so breit wie ihr Text, ändert sich
@@ -115,6 +135,10 @@
   tick();
   watchFits(document);
   setInterval(tick, 1000);   // jede Sekunde, damit kurz vor Ende die Sekunden laufen
+  // Die Schrift lädt erst nach: Danach sind die Zeilen breiter, ohne dass sich ihr Kasten ändert
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { document.querySelectorAll("[data-fit]").forEach(fitLine); });
+  }
 
   // ------------------------------------------------------------------
   // Seiten: lange Listen zeigen nur einen Teil der Angebote (Vorgabe 20, Feld „pro Seite“, auf diesem
@@ -339,12 +363,13 @@
   });
 
   // ------------------------------------------------------------------
-  // Ausblenden ohne Neuladen der Seite: Zeile entfernen und Zähler anpassen, danach einige Sekunden
-  // „Rückgängig“ anbieten (search_detail.html, [data-undo]). Ausblenden geht auch in der Galerie.
-  // Ohne JavaScript schickt das Formular ganz normal ab.
+  // Ausblenden ohne Neuladen der Seite: Zeile entfernen und Zähler anpassen, danach einige Sekunden unten
+  // „Rückgängig“ anbieten (includes/undo_toast.html, [data-undo]). Ausblenden geht mit dem Auge (am Rechner),
+  // per Wischen nach links (am Handy) und in der Galerie. Ohne JavaScript schickt das Formular ganz normal ab.
 
-  var UNDO_SECONDS = 10;
+  var UNDO_SECONDS = 6;
   var undoTimer = null;
+  var reducedMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   function changeCount(name, delta) {
     var el = document.querySelector('[data-count="' + name + '"]');
@@ -369,43 +394,80 @@
       });
   }
 
-  function offerUndo(form, row, ol, next, list) {
-    var box = document.querySelector("[data-undo]");
-    if (!box) return;
+  // Unten „Ausgeblendet · Rückgängig“: gleitet herein, nach UNDO_SECONDS wieder hinaus
+  function showUndo(box, show) {
     window.clearTimeout(undoTimer);
-    box.hidden = false;
-    box.querySelector("[data-undo-button]").onclick = function () {
-      window.clearTimeout(undoTimer);
-      box.hidden = true;
-      post(form.action.replace(/\/hide$/, "/unhide"), form)
-        .then(function () {
-          // Zeile an ihren alten Platz zurück und deren Seite zeigen
-          ol.insertBefore(row, next && next.parentNode === ol ? next : null);
-          var rows = Array.prototype.slice.call(ol.querySelectorAll(":scope > li[data-offer]"));
-          paginate(ol, Math.floor(rows.indexOf(row) / pageSize) + 1);
-          if (list) changeCount(list.dataset.list, 1);
-          hiddenChanged(-1);
-          tick();
-        })
-        .catch(function () { window.location.reload(); });
-    };
-    undoTimer = window.setTimeout(function () { box.hidden = true; }, UNDO_SECONDS * 1000);
+    if (show) {
+      box.hidden = false;
+      window.requestAnimationFrame(function () {
+        window.requestAnimationFrame(function () { box.setAttribute("data-show", ""); });
+      });
+      undoTimer = window.setTimeout(function () { showUndo(box, false); }, UNDO_SECONDS * 1000);
+    } else {
+      box.removeAttribute("data-show");
+      undoTimer = window.setTimeout(function () { box.hidden = true; }, reducedMotion ? 0 : 220);
+    }
   }
 
+  // Zeile wieder an ihren alten Platz und deren Seite zeigen
+  function putBack(row, ol, next, list) {
+    ol.insertBefore(row, next && next.parentNode === ol ? next : null);
+    var rows = Array.prototype.slice.call(ol.querySelectorAll(":scope > li[data-offer]"));
+    paginate(ol, Math.floor(rows.indexOf(row) / pageSize) + 1);
+    if (list) changeCount(list.dataset.list, 1);
+    tick();
+  }
+
+  function offerUndo(form, row, ol, next, list, saved) {
+    var box = document.querySelector("[data-undo]");
+    if (!box) return;
+    box.querySelector("[data-undo-button]").onclick = function () {
+      showUndo(box, false);
+      putBack(row, ol, next, list);
+      // erst rückgängig machen, wenn das Ausblenden gespeichert ist, sonst überholt es sich
+      saved
+        .then(function () { return post(form.action.replace(/\/hide$/, "/unhide"), form); })
+        .then(function () { hiddenChanged(-1); })
+        .catch(function () { window.location.reload(); });
+    };
+    showUndo(box, true);
+  }
+
+  // Zeile nach dem Wischen wieder in den Ausgangszustand (für „Rückgängig“)
+  function resetRow(row) {
+    var content = row.querySelector("[data-swipe-content]");
+    var action = row.querySelector("[data-swipe-action]");
+    ["height", "opacity", "transition", "overflow"].forEach(function (name) { row.style[name] = ""; });
+    row.removeAttribute("data-swiping");
+    if (content) {
+      content.style.transform = "";
+      content.style.transition = "";
+    }
+    if (action) {
+      action.hidden = true;
+      action.removeAttribute("data-armed");
+    }
+  }
+
+  // Ausblenden ohne Warten: Die Zeile verschwindet sofort, gespeichert wird im Hintergrund. Klappt das nicht,
+  // kommt sie zurück und das Formular geht ganz normal ab.
   function hideOffer(form) {
     var row = form.closest("li");
     var ol = row.parentElement;
     var next = row.nextElementSibling;
     var list = row.closest("[data-list]");
-    post(form.action, form)
-      .then(function () {
-        row.remove();
-        paginate(ol);
-        if (list) changeCount(list.dataset.list, -1);
-        hiddenChanged(1);
-        offerUndo(form, row, ol, next, list);
-      })
-      .catch(function () { form.submit(); });
+    row.remove();
+    resetRow(row);
+    paginate(ol);
+    if (list) changeCount(list.dataset.list, -1);
+    var saved = post(form.action, form);
+    saved.then(function () { hiddenChanged(1); }, function () {
+      var box = document.querySelector("[data-undo]");
+      if (box) showUndo(box, false);
+      if (!row.isConnected) putBack(row, ol, next, list);
+      form.submit();
+    });
+    offerUndo(form, row, ol, next, list, saved);
   }
 
   // Herz an einer Auktion (Galerie, Issue #20): Heuhaufen meldet sich dann vor dem Ende, auch über dem Limit,
@@ -453,6 +515,158 @@
         event.preventDefault();
         hideOffer(form);
       });
+    });
+    bindSwipe(root);
+  }
+
+  // ------------------------------------------------------------------
+  // Wischen nach links blendet ein Angebot aus (Handy, mit dem Finger). Die Zeile folgt dem Finger, dahinter
+  // erscheint „Ausblenden“ (includes/offer.html, data-swipe-action), ab SWIPE_COMMIT der Breite kräftiger.
+  // Weit oder schnell genug gewischt: Die Zeile gleitet hinaus, klappt zu, unten erscheint „Rückgängig“.
+  // Sonst federt sie zurück. Senkrecht scrollt die Seite wie gewohnt (touch-action: pan-y). Damit es nicht
+  // ruckelt, bewegt sich nur transform (läuft auf der Grafikkarte), und zwar einmal je Bild (requestAnimationFrame);
+  // während der Bewegung wird nichts gemessen.
+
+  var SWIPE_SLOP = 10;        // so viele px seitlich, bevor es als Wischen zählt
+  var SWIPE_COMMIT = 0.35;    // so weit (Anteil der Breite) muss es gehen …
+  var SWIPE_FLING = 0.5;      // … oder so schnell (px/ms) nach links, mindestens 40 px
+  var SWIPE_MS = 200;
+
+  if (window.PointerEvent) document.documentElement.setAttribute("data-swipe", "");   // Auge am Handy: sr-only
+
+  function slide(el, x, ms, done) {
+    var finished = false;
+    var finish = function () {
+      if (finished) return;
+      finished = true;
+      el.removeEventListener("transitionend", finish);
+      el.style.transition = "";
+      if (done) done();
+    };
+    if (reducedMotion) ms = 0;
+    el.style.transition = ms ? "transform " + ms + "ms cubic-bezier(0.2, 0.8, 0.2, 1)" : "";
+    el.style.transform = x ? "translate3d(" + x + "px, 0, 0)" : "";
+    if (!ms) {
+      finish();
+      return;
+    }
+    el.addEventListener("transitionend", finish);
+    window.setTimeout(finish, ms + 80);   // falls transitionend ausbleibt
+  }
+
+  function collapse(row, done) {
+    if (reducedMotion) {
+      done();
+      return;
+    }
+    row.style.height = row.getBoundingClientRect().height + "px";
+    row.style.overflow = "hidden";
+    row.getBoundingClientRect();   // Höhe festhalten, dann zuklappen
+    row.style.transition = "height 180ms ease-out, opacity 180ms ease-out";
+    row.style.height = "0px";
+    row.style.opacity = "0";
+    window.setTimeout(done, 200);
+  }
+
+  function bindSwipe(root) {
+    if (!window.PointerEvent) return;
+    root.querySelectorAll("li[data-offer]").forEach(function (row) {
+      var content = row.querySelector("[data-swipe-content]");
+      var action = row.querySelector("[data-swipe-action]");
+      var form = row.querySelector("form[data-hide]");
+      if (!content || !action || !form || row.hasAttribute("data-swipe-ready")) return;
+      row.setAttribute("data-swipe-ready", "");
+      var state = "idle";   // idle | maybe | drag | gone
+      var x0 = 0;
+      var y0 = 0;
+      var dx = 0;
+      var width = 0;
+      var frame = 0;
+      var track = [];
+
+      var paint = function () {
+        frame = 0;
+        content.style.transform = "translate3d(" + dx + "px, 0, 0)";
+        action.toggleAttribute("data-armed", -dx > width * SWIPE_COMMIT);
+      };
+
+      content.addEventListener("pointerdown", function (event) {
+        if (event.pointerType !== "touch" || !event.isPrimary || state === "gone") return;
+        state = "maybe";
+        x0 = event.clientX;
+        y0 = event.clientY;
+        dx = 0;
+        track = [[event.timeStamp, event.clientX]];
+      });
+
+      content.addEventListener("pointermove", function (event) {
+        if ((state !== "maybe" && state !== "drag") || event.pointerType !== "touch") return;
+        var mx = event.clientX - x0;
+        var my = event.clientY - y0;
+        if (state === "maybe") {
+          if (Math.abs(my) > SWIPE_SLOP && Math.abs(my) >= Math.abs(mx)) {
+            state = "idle";   // senkrecht: Scrollen
+            return;
+          }
+          if (mx > -SWIPE_SLOP || Math.abs(mx) < Math.abs(my) * 1.2) return;
+          state = "drag";
+          width = row.getBoundingClientRect().width;
+          action.hidden = false;
+          row.setAttribute("data-swiping", "");
+          content.style.willChange = "transform";
+          try {
+            content.setPointerCapture(event.pointerId);
+          } catch (error) {
+            console.info("Heuhaufen: Wischen ohne Pointer-Capture (" + error.name + ")");
+          }
+        }
+        dx = Math.min(0, mx + SWIPE_SLOP);   // ab dem Punkt, an dem das Wischen begann: kein Sprung
+        track.push([event.timeStamp, event.clientX]);
+        if (track.length > 6) track.shift();
+        if (!frame) frame = window.requestAnimationFrame(paint);
+      });
+
+      var release = function (cancelled) {
+        if (state !== "drag") {
+          state = "idle";
+          return;
+        }
+        if (frame) {
+          window.cancelAnimationFrame(frame);
+          frame = 0;
+        }
+        var first = track[0];
+        var last = track[track.length - 1];
+        var speed = last[0] > first[0] ? (last[1] - first[1]) / (last[0] - first[0]) : 0;
+        content.style.willChange = "";
+        if (!cancelled && (-dx > width * SWIPE_COMMIT || (speed < -SWIPE_FLING && -dx > 40))) {
+          state = "gone";
+          action.setAttribute("data-armed", "");
+          slide(content, -width, SWIPE_MS, function () {
+            collapse(row, function () {
+              state = "idle";
+              hideOffer(form);
+            });
+          });
+        } else {
+          state = "idle";
+          slide(content, 0, SWIPE_MS, function () {
+            action.hidden = true;
+            action.removeAttribute("data-armed");
+            row.removeAttribute("data-swiping");
+          });
+        }
+      };
+
+      content.addEventListener("pointerup", function () { release(false); });
+      content.addEventListener("pointercancel", function () { release(true); });
+      // Nach dem Wischen keinen Klick auf Bild oder Titel auslösen (sonst ginge die Galerie auf)
+      content.addEventListener("click", function (event) {
+        if (row.hasAttribute("data-swiping")) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }, true);
     });
   }
 

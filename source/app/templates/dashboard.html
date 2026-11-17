@@ -33,7 +33,7 @@
 <ul class="mt-7 grid grid-cols-2 gap-3 sm:grid-cols-[repeat(auto-fill,minmax(250px,1fr))] sm:gap-4" data-tiles>
   {% for s in searches %}{% set next = s.matches[:2] if s.active else [] %}
   <li class="min-w-0">
-    <a href="/searches/{{ s.id }}" {% if not s.active %}data-paused{% endif %} class="flex h-full flex-col rounded-2xl border border-line bg-surface p-3.5 text-inherit no-underline hover:border-control data-paused:opacity-55 sm:p-5">
+    <a href="/searches/{{ s.id }}" {% if not s.active %}data-paused{% endif %} class="flex h-full flex-col rounded-2xl border border-line bg-surface p-3 text-inherit no-underline hover:border-control data-paused:opacity-55 sm:p-5">
       <h3 class="line-clamp-2 text-ui font-semibold leading-snug">{{ s.title }}</h3>
       <p class="mt-0.5 truncate text-meta text-muted">Limit {{ eur(s.max_price, cents=False) }}</p>
       {% if s.last_error %}<p class="mt-1.5 line-clamp-3 text-meta text-over">{{ s.last_error }}</p>{% endif %}
@@ -44,13 +44,13 @@
       </p>
       <div class="mt-auto pt-3.5">
         {% if next %}
-        {# Die nächsten zwei Treffer: Bild, Restzeit (darf umbrechen: „2 Tagen / 3h58“), Preis. Zeilen über
-           subgrid, damit die Preise nebeneinander auf einer Höhe stehen. #}
-        <div class="grid grid-cols-2 gap-x-2.5 gap-y-1 border-t border-line pt-3" data-next>
+        {# Die nächsten zwei Treffer: Bild, Restzeit (wird knapp, wenn es eng wird: „2d 3h58“, data-fit), Preis.
+           Zeilen über subgrid, damit die Preise nebeneinander auf einer Höhe stehen. #}
+        <div class="grid grid-cols-2 gap-x-2 gap-y-1 border-t border-line pt-3 sm:gap-x-2.5" data-next>
           {% for v in next %}
-          <div class="row-span-3 grid min-w-0 grid-rows-subgrid">
+          <div class="row-span-3 grid min-w-0 grid-cols-1 grid-rows-subgrid">
             <span class="grid aspect-square w-full place-items-center overflow-hidden rounded-thumb bg-tile">{% if v.image %}<img class="{{ ui.product_image() }}" src="{{ image_url(v) }}" alt="" loading="lazy" referrerpolicy="no-referrer">{% else %}<span class="font-num text-muted opacity-55" aria-hidden="true">{{ s.initial }}</span>{% endif %}</span>
-            <span class="mt-0.5 text-[12.5px] leading-tight [&_[data-left]]:whitespace-normal">{% if v.auction and v.end_time %}{{ ui.countdown_time(v.end_time, now, v.lead_seconds) }}{% else %}<span class="text-muted">Sofortkauf</span>{% endif %}</span>
+            <span class="mt-0.5 truncate text-[12.5px] leading-tight" data-fit>{% if v.auction and v.end_time %}{{ ui.countdown_time(v.end_time, now, v.lead_seconds) }}{% else %}<span class="text-muted">Sofortkauf</span>{% endif %}</span>
             <span class="{{ ui.num() }} text-[12.5px] leading-tight font-semibold">{{ price(v) }}</span>
           </div>
           {% endfor %}

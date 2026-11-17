@@ -4,17 +4,25 @@
   v.search_title (nur in der Liste „Alle Angebote“): zu welchem Gesuch das Angebot gehört.
   Vorschaubild und Titel öffnen die Galerie (data-gallery). Die Galerie blendet über form[data-hide] aus und
   setzt bei Auktionen über form[data-keep] das Herz (Issue #20), das hier vor „Auktion“ erscheint.
+  Am Handy blendet Wischen nach links aus (app.js „Wischen“): Die Zeile (data-swipe-content) folgt dem Finger,
+  dahinter erscheint data-swipe-action. Das Auge ist dort nur noch für Screenreader da (sr-only), am Rechner und
+  ohne JavaScript bleibt es sichtbar.
   Die data-sort-…-Attribute nutzt das Sortieren im Browser (app.js).
   v.market: Durchschnittspreis aus market.py (fehlt, wenn es nicht genug Vergleich gibt).
 #}
 {% import "includes/ui.html" as ui %}
 {% set shown = v.gross if prices_with_shipping else v.rel_price %}{# angezeigter Preis, siehe Einstellungen → Anzeige #}
-<li class="flex items-start gap-2 border-b border-line md:items-center {{ 'opacity-70' if kind == 'over' }}"
+<li class="relative overflow-hidden border-b border-line {{ 'opacity-70' if kind == 'over' }}"
     data-offer {% if v.auction %}data-kept="{{ 'true' if v.keep else 'false' }}"{% endif %}
     data-sort-end="{{ v.end_time|int if v.end_time else '' }}"
     data-sort-price="{{ shown if shown is not none else '' }}"
     data-sort-new="{{ v.first_seen|int if v.first_seen else '' }}"
     data-sort-distance="{{ v.distance_km if v.distance_km is not none else '' }}">
+  {% if kind != 'hidden' %}
+  <span class="absolute inset-0 flex items-center justify-end gap-2 bg-over/75 pr-5 text-sm font-semibold text-canvas transition-colors duration-150 data-armed:bg-over [&>svg]:transition-transform [&>svg]:duration-150 data-armed:[&>svg]:scale-125"
+        data-swipe-action hidden aria-hidden="true">{{ ui.icon('eye-off') }}Ausblenden</span>
+  {% endif %}
+  <div class="relative flex items-start gap-2 bg-canvas touch-pan-y md:items-center" data-swipe-content>
   <div class="grid min-w-0 grow grid-cols-[68px_minmax(0,1fr)] items-start gap-x-4 py-4 md:grid-cols-[84px_minmax(0,1fr)] md:items-center md:gap-x-5 {{ 'opacity-60' if kind == 'hidden' }}">
     {# Vorschaubild: öffnet die Galerie (app.js), ohne JavaScript das Angebot bei der Plattform #}
     {% if v.image %}
@@ -67,7 +75,7 @@
     <button class="{{ ui.icon_button() }}" type="submit" title="Wieder einblenden" aria-label="Wieder einblenden">{{ ui.icon('eye') }}</button>
   </form>
   {% else %}
-  <form method="post" action="/searches/{{ v.search_id }}/hide" class="mt-4 md:mt-0" data-hide>
+  <form method="post" action="/searches/{{ v.search_id }}/hide" class="mt-4 pointer-coarse:in-data-swipe:sr-only md:mt-0" data-hide>
     {{ ui.csrf_field(csrf) }}<input type="hidden" name="item_id" value="{{ v.item_id }}">
     <button class="{{ ui.icon_button() }}" type="submit" title="Ausblenden" aria-label="Ausblenden">{{ ui.icon('eye-off') }}</button>
   </form>
@@ -77,4 +85,5 @@
   </form>
   {% endif %}
   {% endif %}
+  </div>
 </li>
